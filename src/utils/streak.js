@@ -17,12 +17,15 @@ export const isDayComplete = (logs, tasks, uid, dateKey) => {
 //
 // Засвар: өнөөдөр дуусаагүй бол өчигдрөөс эхэлж тоолно (өмнөх streak хэвээр
 // хадгалагдана), өнөөдөр дууссан бол өнөөдрөөс эхэлж тоолно (streak 1-ээр нэмэгдэнэ).
-export const calculateStreak = (logs, tasks, uid, endDateKey) => {
+export const calculateStreak = (logs, tasks, uid, endDateKey, epochKey = null) => {
   let cursor = isDayComplete(logs, tasks, uid, endDateKey)
     ? endDateKey
     : getPreviousDateKey(endDateKey);
+  // Reset epoch: streak-ийг энэ өдрөөс өмнө тооцохгүй (сарын эхлэл)
+  if (epochKey && cursor < epochKey) return 0;
   let streak = 0;
-  while (isDayComplete(logs, tasks, uid, cursor)) {
+  while (!epochKey || cursor >= epochKey) {
+    if (!isDayComplete(logs, tasks, uid, cursor)) break;
     streak += 1;
     cursor = getPreviousDateKey(cursor);
   }

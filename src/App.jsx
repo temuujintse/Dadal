@@ -28,10 +28,13 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { useOnboarding } from './hooks/useOnboarding';
 import { useInviteLinkCode } from './hooks/useInviteLinkCode';
 import { useTaskTimer } from './hooks/useTaskTimer';
+import { useDailyTip } from './hooks/useDailyTip';
+import { useAppUpdates } from './hooks/useAppUpdates';
 import { useFamilyData } from './hooks/useFamilyData';
 import { defaultMeals, defaultFamilyRewards } from './data';
 import { getTodayDateKey, dayNamesFull, mealKeyByWeekday } from './utils/dates';
 import { normalizeTask } from './constants/tasks';
+import { allHabitSuggestions } from './constants/habitSuggestions';
 import RewardsScreen from './screens/RewardsScreen';
 import MealsScreen from './screens/MealsScreen';
 import StatsScreen from './screens/StatsScreen';
@@ -40,10 +43,27 @@ import AuthScreen from './screens/AuthScreen';
 import FamilySetupScreen from './screens/FamilySetupScreen';
 import DashboardScreen from './screens/DashboardScreen';
 import SettingsScreen from './screens/SettingsScreen';
+import { calcDailyCalories, macroTargetsFromCalories } from './utils/nutrition';
+import { PHOTO_UPLOAD_ENABLED } from './constants/features';
+import { getJourneyState } from './utils/journey';
+import { GENERIC_DAILY_CALORIE_TARGET, DAILY_NUTRITION_TARGET } from './constants/foodCalories';
 import ConfettiBurst from './components/ConfettiBurst';
 import ErrorBoundary from './components/ErrorBoundary';
+import DailyTipModal from './components/DailyTipModal';
+
+// P2.4: DashboardScreen нь memo()-той тул props бүр ТОГТВОРТОЙ identity-тэй
+// байх ёстой. `foodLogs?.[selectedDate] || []` гэж шууд бичвэл өдрийн
+// бүртгэл хоосон үед РЕНДЕР БҮРТ шинэ array literal үүсгээд memo-г эвдэнэ
+// (timer tick бүрт Dashboard дахин render болох хуучин bug-ыг сэргээнэ).
+const EMPTY_FOOD_ENTRIES = [];
 
 export default function App() {
+  // EAS Update-ийг апп нээгдэх / арын дэвсгэрээс буцах бүрд шалгаж, байвал
+  // татаад шууд суулгана. Dev горимд огт ажиллахгүй (доторх __DEV__ шалгалт).
+  // ErrorBoundary-аас ГАДНА биш, дотор нь дуудвал алдааны үед шинэчлэлт ирэх
+  // боломж хаагдах тул хамгийн гадна талд байрлуулав.
+  useAppUpdates();
+
   return (
     // ErrorBoundary нь AuthProvider-ээс ГАДНА байна — ингэснээр auth болон
     // Firebase-ийн эхлэлийн үе шатанд гарсан алдааг ч барина.
@@ -144,6 +164,9 @@ function MainApp() {
     setSelectedMemberId,
     meals,
     setMeals,
+    foodLogs,
+    addFoodEntry,
+    removeFoodEntry,
     familyRewards,
     setFamilyRewards,
     notificationSettings,
@@ -173,6 +196,10 @@ function MainApp() {
     handleRedeemReward,
     saveNotificationSettings,
     resetMonthlyProgress,
+    saveMemberPhoto,
+    saveFamilyCover,
+    listArchives,
+    saveMemberProfile,
   } = useFamilyData({
     user,
     selectedDate,
@@ -195,6 +222,7 @@ function MainApp() {
     if (task && !task.done) toggleTask(taskId, true);
   };
   const { activeTimer, startTimer, stopTimer, formatTime } = useTaskTimer(handleTimerFinish);
+  const { tip: dailyTip, visible: dailyTipVisible, dismiss: dismissDailyTip } = useDailyTip();
 
   // P2.5: өдөр солигдоход strip мөн шинэчлэгдэнэ (anchor = todayKey)
   const datesArray = useMemo(() => {
@@ -265,7 +293,60 @@ function MainApp() {
   const handleSelectDate = useCallback((key) => { setSelectedDate(key); setExpandedTaskId(null); }, []);
   const handleToggleExpand = useCallback((id) => setExpandedTaskId((prev) => (prev === id ? null : id)), []);
   const handleChangeTaskInput = useCallback((id, value) => updateTaskLog(id, { inputValue: value }), [updateTaskLog]);
+  // detailType-ийн бүх талбарыг (hoursValue, countValue, endedAt) нэг замаар
+  // бичнэ. updateTaskLog нь оноо өөрчлөхгүй, зөвхөн логоо шинэчилнэ.
+  const handleUpdateTaskLog = useCallback((id, updates) => updateTaskLog(id, updates), [updateTaskLog]);
   const handleOpenAddModal = useCallback(() => setShowAddModal(true), []);
+
+  // ── Зураг оруулах ──────────────────────────────────────────────────────
+  // Facebook-ээс зураг татахын ОРОНД утасны зургийн сангаас сонгоно.
+  // (Facebook Login нь зөвхөн нэвтэрсэн хүний ӨӨРИЙНХ нь зургийг өгдөг тул
+  //  гэр бүлийн бусад гишүүдийн зургийг татах боломжгүй — PLAN_V2.md үзнэ үү.)
+  // photos.js бүх алдааг { ok:false, message } болгон буцаадаг тул энд
+  // try/catch хэрэггүй; хэрэглэгч болгонд ойлгомжтой toast гарна.
+  const [photoUploading, setPhotoUploading] = useState(false);
+
+  // ЗУРГИЙН МОДУЛИЙГ ДИНАМИКААР ачаална. `expo-image-picker` /
+  // `expo-image-manipulator` нь NATIVE модулиуд — тэдгээрийг агуулаагүй
+  // (өмнө нь хийсэн) build рүү OTA update ирэхэд статик импорт нь
+  // "Cannot find native module" алдаа өгч аппыг УНАГААНА. Флаг унтраалттай
+  // үед энэ мөр хэзээ ч ажиллахгүй тул хуучин build ч аюулгүй үлдэнэ.
+  const loadPhotoService = () => import('./services/photos');
+
+  const handleChangeMemberPhoto = useCallback(async (uid) => {
+    if (!PHOTO_UPLOAD_ENABLED || !familyId || !uid || photoUploading) return;
+    setPhotoUploading(true);
+    try {
+      const { pickAndUploadMemberPhoto } = await loadPhotoService();
+      const uploaded = await pickAndUploadMemberPhoto({ familyId, uid });
+      // CANCELED — хэрэглэгч өөрөө буцсан, алдаа биш тул чимээгүй өнгөрнө.
+      if (!uploaded.ok) {
+        if (uploaded.code !== 'CANCELED') showToast(uploaded.message);
+        return;
+      }
+      const saved = await saveMemberPhoto(uid, uploaded.url);
+      showToast(saved.ok ? 'Зураг шинэчлэгдлээ 📸' : saved.message);
+    } finally {
+      setPhotoUploading(false);
+    }
+  }, [familyId, photoUploading, saveMemberPhoto]);
+
+  const handleChangeCoverPhoto = useCallback(async () => {
+    if (!PHOTO_UPLOAD_ENABLED || !familyId || photoUploading) return;
+    setPhotoUploading(true);
+    try {
+      const { pickAndUploadFamilyCover } = await loadPhotoService();
+      const uploaded = await pickAndUploadFamilyCover({ familyId });
+      if (!uploaded.ok) {
+        if (uploaded.code !== 'CANCELED') showToast(uploaded.message);
+        return;
+      }
+      const saved = await saveFamilyCover(uploaded.url);
+      showToast(saved.ok ? 'Нүүрний зураг шинэчлэгдлээ 🖼️' : saved.message);
+    } finally {
+      setPhotoUploading(false);
+    }
+  }, [familyId, photoUploading, saveFamilyCover]);
 
   // Timer мэдээллийг primitive болгон задалж дамжуулна — activeTimer объектын
   // identity tick бүрт өөрчлөгдвөл memo утга учргүй болно.
@@ -283,6 +364,26 @@ function MainApp() {
   const handleTempTaskDelete = useCallback((id) => setTempUserTasks((prev) => (prev || []).filter((task) => task.id !== id)), []);
   const handleTempTaskAdd = useCallback(() => setTempUserTasks((prev) => [...(prev || []), normalizeTask({ id: `task_${Date.now()}`, text: '', hasInput: true, points: 10, required: true })]), []);
 
+  const foodEntriesForSelectedDate = useMemo(() => foodLogs?.[selectedDate] || EMPTY_FOOD_ENTRIES, [foodLogs, selectedDate]);
+
+  // Хувь хүний өдрийн илчлэгийн зорилт. Гишүүн биеийн үзүүлэлтээ бөглөөгүй
+  // (эсвэл 18-аас доош настай) бол ерөнхий 2000 ккал хэвээр — тооцоолол нь
+  // ЗӨВХӨН нэмэлт боломж болохоос шаардлага биш.
+  const selectedMemberProfile = selectedMemberId ? memberList.find((m) => m.uid === selectedMemberId) : null;
+  const dailyCalorieTarget = useMemo(() => {
+    const result = calcDailyCalories(selectedMemberProfile);
+    return result.ok ? result.calories : GENERIC_DAILY_CALORIE_TARGET;
+  }, [selectedMemberProfile]);
+  // 1 сарын аялалын төлөв — Нүүр дэлгэцийн полос болон Шагналын дүгнэлт
+  // хоёулаа ЭНЭ нэг эх сурвалжаас утга авна.
+  const journeyState = useMemo(() => getJourneyState(familyProfile, todayKey), [familyProfile, todayKey]);
+  const dailyMacroTarget = useMemo(
+    () => macroTargetsFromCalories(dailyCalorieTarget) || DAILY_NUTRITION_TARGET,
+    [dailyCalorieTarget]
+  );
+  const handleAddFoodEntry = useCallback((entry) => addFoodEntry(selectedDate, entry), [addFoodEntry, selectedDate]);
+  const handleRemoveFoodEntry = useCallback((entryId) => removeFoodEntry(selectedDate, entryId), [removeFoodEntry, selectedDate]);
+
   const handleAddTask = async () => {
     if (!newTaskText.trim() || !selectedMemberId) return;
     const task = normalizeTask({ id: `task_${Date.now()}`, text: newTaskText.trim(), hasInput: true, inputPlaceholder: 'Тэмдэглэл', points: Number(newTaskPoints || 10), required: newTaskRequired, category: 'general' });
@@ -293,10 +394,29 @@ function MainApp() {
     setShowAddModal(false);
   };
 
+  const handleAddSuggestedTasks = useCallback(async (ids) => {
+    if (!selectedMemberId || !Array.isArray(ids) || ids.length === 0) return;
+    const selected = allHabitSuggestions.filter((item) => ids.includes(item.id));
+    if (!selected.length) return;
+    const newTasks = selected.map((item, idx) =>
+      normalizeTask({
+        id: `task_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 5)}`,
+        text: item.text,
+        note: item.note || '',
+        category: item.category || 'general',
+        points: item.points || 10,
+        timerMinutes: item.timerMinutes || 0,
+        required: true,
+      })
+    );
+    await saveTasksForMember(selectedMemberId, [...baseTasks, ...newTasks]);
+    showToast(`${newTasks.length} дадал нэмэгдлээ ✨`, 2500);
+  }, [selectedMemberId, baseTasks, saveTasksForMember]);
+
   const renderLoading = (message = 'Апп ачааллаж байна...') => (
     <SafeAreaView className="flex-1 bg-slate-50 items-center justify-center px-8">
-      <View className="w-16 h-16 rounded-3xl bg-blue-600 items-center justify-center mb-5"><CircleCheck size={32} color="#fff" /></View>
-      <ActivityIndicator size="large" color="#2563eb" />
+      <View className="w-16 h-16 rounded-3xl items-center justify-center mb-5" style={{ backgroundColor: '#f97316' }}><CircleCheck size={32} color="#fff" /></View>
+      <ActivityIndicator size="large" color="#f97316" />
       <Text className="text-base font-black text-gray-900 mt-4">{message}</Text>
       <Text className="text-xs text-gray-500 text-center mt-1">Firebase, account, family state шалгаж байна</Text>
       {firebaseError ? <Text className="text-xs text-red-500 mt-3 text-center">{firebaseError}</Text> : null}
@@ -334,7 +454,15 @@ function MainApp() {
             members={memberList}
             onSelectMember={handleSelectMember}
             familyProfile={familyProfile}
+            groupType={familyProfile?.groupType || 'family'}
             onGoSettings={handleGoSettings}
+
+            currentUserId={user.uid}
+            coverPhotoURL={familyProfile?.coverPhotoURL || null}
+            canEditCover={canManage}
+            photoUploading={photoUploading}
+            onChangeMemberPhoto={handleChangeMemberPhoto}
+            onChangeCoverPhoto={handleChangeCoverPhoto}
 
             progress={progress}
             completedCount={completedCount}
@@ -348,6 +476,7 @@ function MainApp() {
             todayKey={todayKey}
             headerDateStr={headerDateStr}
             onSelectDate={handleSelectDate}
+            onFetchArchives={listArchives}
 
             currentMood={currentMood}
             onSelectMood={handleMoodSelect}
@@ -358,6 +487,7 @@ function MainApp() {
             onToggleExpand={handleToggleExpand}
             onToggleOption={toggleOption}
             onChangeTaskInput={handleChangeTaskInput}
+            onUpdateTaskLog={handleUpdateTaskLog}
             timerTaskId={timerTaskId}
             timerRemaining={timerRemaining}
             timerRunning={timerRunning}
@@ -373,22 +503,50 @@ function MainApp() {
             onTempTaskAdd={handleTempTaskAdd}
             onTempTaskDelete={handleTempTaskDelete}
             onOpenAddModal={handleOpenAddModal}
+            onAddSuggestedTasks={handleAddSuggestedTasks}
 
             totalFamilyPoints={totalFamilyPoints}
             activeReward={activeReward}
             mealsToday={mealsToday}
             onGoRewards={handleGoRewards}
             onGoMeals={handleGoMeals}
+
+            foodEntries={foodEntriesForSelectedDate}
+            dailyCalorieTarget={dailyCalorieTarget}
+            dailyMacroTarget={dailyMacroTarget}
+            onAddFoodEntry={handleAddFoodEntry}
+            onRemoveFoodEntry={handleRemoveFoodEntry}
           />
         )}
 
-        {activeTab === 'habits' && <RewardsScreen canEdit={canManage} familyRewards={familyRewards} setFamilyRewards={setFamilyRewards} isEditingRewards={isEditingRewards} setIsEditingRewards={setIsEditingRewards} tempRewards={tempRewards} setTempRewards={setTempRewards} selectedRewardIdx={selectedRewardIdx} setSelectedRewardIdx={setSelectedRewardIdx} totalFamilyPoints={totalFamilyPoints} saveToCloud={saveToCloud} showResetConfirm={showResetConfirm} setShowResetConfirm={setShowResetConfirm} onResetMonth={resetMonthlyProgress} onRedeemReward={handleRedeemReward} />}
-        {activeTab === 'meals' && <MealsScreen canEdit={canManage} meals={meals} setMeals={setMeals} selectedMealDay={selectedMealDay} setSelectedMealDay={setSelectedMealDay} isEditingMeals={isEditingMeals} setIsEditingMeals={setIsEditingMeals} tempMeals={tempMeals} setTempMeals={setTempMeals} saveToCloud={saveToCloud} />}
-        {activeTab === 'stats' && <StatsScreen userStats={displayStats} selectedUser={selectedUserName} progress={progress} weeklyReport={weeklyReport} weeklyTrend={weeklyTrend} completedCount={completedCount} totalTasks={currentDisplayTasks.length} />}
-        {activeTab === 'settings' && <SettingsScreen familyProfile={familyProfile} selectedUser={selectedUserName} currentMember={currentUserMember} members={memberList} notificationSettings={notificationSettings} onSaveNotificationSettings={saveNotificationSettings} onLogout={handleLogout} onResetOnboarding={handleResetOnboarding} />}
+        {activeTab === 'habits' && <RewardsScreen groupType={familyProfile?.groupType || 'family'} journey={journeyState} members={memberList} canEdit={canManage} familyRewards={familyRewards} setFamilyRewards={setFamilyRewards} isEditingRewards={isEditingRewards} setIsEditingRewards={setIsEditingRewards} tempRewards={tempRewards} setTempRewards={setTempRewards} selectedRewardIdx={selectedRewardIdx} setSelectedRewardIdx={setSelectedRewardIdx} totalFamilyPoints={totalFamilyPoints} saveToCloud={saveToCloud} showResetConfirm={showResetConfirm} setShowResetConfirm={setShowResetConfirm} onResetMonth={resetMonthlyProgress} onRedeemReward={handleRedeemReward} />}
+        {activeTab === 'meals' && (
+          <MealsScreen
+            groupType={familyProfile?.groupType || 'family'}
+            canEdit={canManage}
+            meals={meals}
+            setMeals={setMeals}
+            selectedMealDay={selectedMealDay}
+            setSelectedMealDay={setSelectedMealDay}
+            isEditingMeals={isEditingMeals}
+            setIsEditingMeals={setIsEditingMeals}
+            tempMeals={tempMeals}
+            setTempMeals={setTempMeals}
+            saveToCloud={saveToCloud}
+            foodEntries={foodEntriesForSelectedDate}
+            dailyCalorieTarget={dailyCalorieTarget}
+            dailyMacroTarget={dailyMacroTarget}
+            onAddFoodEntry={handleAddFoodEntry}
+            onRemoveFoodEntry={handleRemoveFoodEntry}
+            foodLogDateLabel={headerDateStr}
+          />
+        )}
+        {activeTab === 'stats' && <StatsScreen groupType={familyProfile?.groupType || 'family'} userStats={displayStats} selectedUser={selectedUserName} progress={progress} weeklyReport={weeklyReport} weeklyTrend={weeklyTrend} completedCount={completedCount} totalTasks={currentDisplayTasks.length} />}
+        {activeTab === 'settings' && <SettingsScreen familyProfile={familyProfile} selectedUser={selectedUserName} currentMember={currentUserMember} members={memberList} notificationSettings={notificationSettings} onSaveNotificationSettings={saveNotificationSettings} onLogout={handleLogout} onResetOnboarding={handleResetOnboarding} onSaveMemberProfile={saveMemberProfile} />}
       </ScrollView>
 
       <ConfettiBurst key={confettiKey} active={confettiKey > 0} />
+      <DailyTipModal visible={dailyTipVisible} tip={dailyTip} onClose={dismissDailyTip} />
 
       {toastMessage ? <View className="absolute top-14 left-5 right-5 bg-gray-950 rounded-2xl px-4 py-3"><Text className="text-white font-black text-center">{toastMessage}</Text></View> : null}
       </SafeAreaView>
@@ -398,18 +556,80 @@ function MainApp() {
         {[{ id: 'dashboard', label: 'Нүүр', Icon: Home }, { id: 'meals', label: 'Хоол', Icon: Utensils }, { id: 'habits', label: 'Шагнал', Icon: Gift }, { id: 'stats', label: 'Стат', Icon: ChartNoAxesColumn }, { id: 'settings', label: 'Тохиргоо', Icon: Settings }].map((tab) => {
           const active = activeTab === tab.id;
           const Icon = tab.Icon;
-          return <TouchableOpacity key={tab.id} onPress={() => setActiveTab(tab.id)} className={`items-center justify-center rounded-2xl px-3 py-2 ${active ? 'bg-orange-50' : ''}`}><Icon size={20} color={active ? '#f97316' : '#94a3b8'} /><Text className={`text-[9px] font-black mt-1 ${active ? 'text-orange-600' : 'text-gray-400'}`}>{tab.label}</Text><View className="w-1.5 h-1.5 rounded-full mt-1" style={{ backgroundColor: active ? '#f97316' : 'transparent' }} /></TouchableOpacity>;
+          return (
+            <TouchableOpacity
+              key={tab.id}
+              onPress={() => setActiveTab(tab.id)}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              accessibilityRole="button"
+              accessibilityLabel={tab.label}
+              accessibilityState={{ selected: active }}
+              className={`items-center justify-center rounded-2xl px-3 py-2.5 ${active ? 'bg-orange-50 border border-orange-100' : ''}`}
+              style={{ minHeight: 56, minWidth: 56 }}
+            >
+              <Icon size={20} color={active ? '#f97316' : '#94a3b8'} />
+              <Text className={`text-[10px] font-bold mt-1 ${active ? 'text-orange-600' : 'text-gray-400'}`}>{tab.label}</Text>
+            </TouchableOpacity>
+          );
         })}
       </View>
 
       <Modal visible={showAddModal} transparent animationType="slide" onRequestClose={() => setShowAddModal(false)}>
         <Pressable className="flex-1 bg-black/30 justify-end" onPress={() => setShowAddModal(false)}>
-          <Pressable className="bg-white rounded-t-[32px] p-6 gap-4" onPress={() => {}}>
-            <Text className="text-2xl font-black text-gray-950">Шинэ дадал нэмэх</Text>
-            <TextInput value={newTaskText} onChangeText={setNewTaskText} placeholder="Жишээ: 20 минут алхах" placeholderTextColor="#94a3b8" className="bg-slate-50 border border-slate-200 rounded-2xl p-4 font-bold text-gray-900" />
-            <TextInput value={newTaskPoints} onChangeText={setNewTaskPoints} keyboardType="number-pad" placeholder="Оноо" className="bg-slate-50 border border-slate-200 rounded-2xl p-4 font-bold text-gray-900" />
-            <View className="flex-row items-center justify-between bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3"><Text className="font-black text-gray-700">Required task</Text><Switch value={newTaskRequired} onValueChange={setNewTaskRequired} /></View>
-            <TouchableOpacity onPress={handleAddTask} className="bg-blue-600 rounded-2xl py-4 items-center"><Text className="text-white font-black">Нэмэх</Text></TouchableOpacity>
+          <Pressable className="bg-white rounded-t-[32px] p-6 gap-4" onPress={() => {}} style={{ paddingBottom: 32 }}>
+            <View className="flex-row items-center justify-between">
+              <View>
+                <Text className="text-xl font-black text-gray-900">Шинэ дадал нэмэх</Text>
+                <Text className="text-xs font-semibold text-gray-500 mt-1">Жижиг алхмаас эхлээрэй</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowAddModal(false)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityRole="button"
+                accessibilityLabel="Хаах"
+                className="w-11 h-11 rounded-2xl bg-slate-100 items-center justify-center"
+                style={{ minHeight: 44, minWidth: 44 }}
+              >
+                <Text className="text-slate-500 font-black text-lg">✕</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              value={newTaskText}
+              onChangeText={setNewTaskText}
+              placeholder="Жишээ: Өглөө ном 10 минут унших"
+              placeholderTextColor="#94a3b8"
+              className="bg-slate-50 border border-slate-200 rounded-2xl p-4 font-bold text-gray-900"
+              style={{ minHeight: 52 }}
+            />
+            <View className="flex-row gap-3">
+              <View className="flex-1">
+                <Text className="text-[11px] font-black text-gray-500 mb-1.5 ml-1">Оноо</Text>
+                <TextInput
+                  value={newTaskPoints}
+                  onChangeText={setNewTaskPoints}
+                  keyboardType="number-pad"
+                  placeholder="10"
+                  placeholderTextColor="#94a3b8"
+                  className="bg-slate-50 border border-slate-200 rounded-2xl p-4 font-bold text-gray-900 text-center"
+                  style={{ minHeight: 52 }}
+                />
+              </View>
+              <View className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-4 justify-center" style={{ minHeight: 52 }}>
+                <Text className="text-xs font-black text-gray-700">Өдөр бүр хийх</Text>
+                <Text className="text-[10px] font-semibold text-gray-400">Алгасаж болно — унтраавал сонголт</Text>
+              </View>
+              <View className="justify-center">
+                <Switch value={newTaskRequired} onValueChange={setNewTaskRequired} />
+              </View>
+            </View>
+            <TouchableOpacity
+              onPress={handleAddTask}
+              activeOpacity={0.85}
+              className="bg-orange-500 rounded-2xl py-4 items-center shadow-sm"
+              style={{ minHeight: 52 }}
+            >
+              <Text className="text-white font-black text-base">Нэмэх</Text>
+            </TouchableOpacity>
           </Pressable>
         </Pressable>
       </Modal>

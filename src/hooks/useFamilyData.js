@@ -3,7 +3,9 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
+  orderBy,
   query,
   runTransaction,
   serverTimestamp,
@@ -14,10 +16,11 @@ import {
 import { db, isFirebaseConfigured } from '../firebase';
 import { defaultMeals, defaultFamilyRewards } from '../data';
 import { normalizeTask, getBaseTasks, defaultNotificationSettings } from '../constants/tasks';
+import { normalizeGroupType, getGroupTypeMeta } from '../constants/groupTypes';
 import { formatDateKey, getTodayDateKey, getWeekAgoKeys, dayNamesShort } from '../utils/dates';
 import { calculateStreak } from '../utils/streak';
 import { sanitizeInviteCode, generateInviteCode } from '../utils/invite';
-import { scheduleDailyHabitReminder, cancelHabitReminders } from '../services/notifications';
+import { applyNotificationSettings } from '../services/notifications';
 import { successFeedback, selectionFeedback } from '../services/feedback';
 
 // dailyLogs listener зөвхөн сүүлийн ~35 хоногийн баримт татна. Дэд collection
@@ -58,10 +61,14 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
   const [tasksByMember, setTasksByMember] = useState({});
   const [dailyLogs, setDailyLogs] = useState({});
   const [meals, setMeals] = useState(defaultMeals);
+  const [foodLogs, setFoodLogs] = useState({});
   const [familyRewards, setFamilyRewards] = useState(defaultFamilyRewards);
   const [notificationSettings, setNotificationSettings] = useState(defaultNotificationSettings);
 
   const saveTimeoutRef = useRef(null);
+  // Generation token: resetMonthlyProgress нь бүх pending debounced бичилтийг хүчингүй болгоно.
+  // clearTimeout дангаараа хангалтгүй — аль хэдийн эхэлсэн async promise нь reset-ийн дараа ч хуучин төлөвөө бичих эрсдэлтэй.
+  const saveGenerationRef = useRef(0);
   const dailyLogsRef = useRef(dailyLogs);
   const membersRef = useRef(members);
 
@@ -219,16 +226,18 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     if (!isFirebaseConfigured || !db || !familyId) return undefined;
     const mealRef = doc(db, 'families', familyId, 'meals', 'current');
     const notificationRef = doc(db, 'families', familyId, 'settings', 'notifications');
+    const foodLogRef = doc(db, 'families', familyId, 'nutrition', 'foodLogs');
     const unsubMeals = onSnapshot(mealRef, (snap) => setMeals(snap.exists() ? (snap.data()?.meals || defaultMeals) : defaultMeals));
     const unsubNotifications = onSnapshot(notificationRef, (snap) => setNotificationSettings(snap.exists() ? { ...defaultNotificationSettings, ...(snap.data() || {}) } : defaultNotificationSettings));
-    return () => { unsubMeals(); unsubNotifications(); };
+    const unsubFoodLogs = onSnapshot(foodLogRef, (snap) => setFoodLogs(snap.exists() ? (snap.data()?.logs || {}) : {}));
+    return () => { unsubMeals(); unsubNotifications(); unsubFoodLogs(); };
   }, [familyId]);
 
   const memberList = useMemo(() => Object.values(members || {}).sort((a, b) => (a.joinedAt || '').localeCompare(b.joinedAt || '')), [members]);
   const displayStats = useMemo(() => {
     const out = {};
     memberList.forEach((member) => {
-      out[member.name || member.uid] = { points: member.points || 0, streak: member.streak || 0, uid: member.uid, role: member.role, avatar: member.avatar || '🙂' };
+      out[member.name || member.uid] = { points: member.points || 0, streak: member.streak || 0, uid: member.uid, role: member.role, avatar: member.avatar || '🙂', photoURL: member.photoURL || null };
     });
     return out;
   }, [memberList]);
@@ -243,6 +252,34 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
   const currentUserMember = user?.uid ? members[user.uid] : null;
   const canManage = ['parent', 'admin'].includes(currentUserMember?.role);
   const totalFamilyPoints = memberList.reduce((sum, member) => sum + (member.points || 0), 0);
+
+  // ── Урилгын баримтын гишүүдийн тоог АДМИН-ы апп тогтмол шинэчилнэ ──────
+  // Нэгдэхээр буй хүн families/{id}/members-ийг УНШИХ эрхгүй (дүрэм:
+  // read if isFamilyMember) тул "бүлэг дүүрсэн үү?" гэдгийг зөвхөн
+  // inviteCodes/{code} баримтаас мэдэж чадна. Админ энд memberCount-ыг
+  // бичиж, дүүрсэн үед active:false болгоно (хос = 2 хүн, хувь хүн = 1).
+  // Гишүүн хасагдвал буцаад идэвхжинэ. Дүрэм: update if isAdmin(familyId).
+  const inviteSyncRef = useRef('');
+  const inviteCodeForSync = familyProfile?.inviteCode || '';
+  const groupTypeForSync = familyProfile?.groupType;
+  useEffect(() => {
+    if (!db || !canManage || !familyId || !inviteCodeForSync) return;
+    const max = getGroupTypeMeta(groupTypeForSync).maxMembers;
+    const count = memberList.length;
+    const active = max > 1 && count < max;
+    const signature = `${inviteCodeForSync}:${count}:${active}`;
+    if (inviteSyncRef.current === signature) return;
+    inviteSyncRef.current = signature;
+    setDoc(doc(db, 'inviteCodes', inviteCodeForSync), {
+      memberCount: count,
+      maxMembers: max,
+      active,
+      updatedAt: serverTimestamp(),
+    }, { merge: true }).catch((e) => {
+      // Амжилтгүй болох нь эгзэгтэй биш — зөвхөн "дүүрсэн" шалгалт хоцорно.
+      console.warn('Invite code sync error:', e?.code, e?.message);
+    });
+  }, [canManage, familyId, inviteCodeForSync, groupTypeForSync, memberList]);
 
   const baseTasks = useMemo(() => {
     const tasks = selectedMemberId ? tasksByMember[selectedMemberId] : [];
@@ -262,6 +299,13 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
       done: Boolean(log.done),
       inputValue: log.inputValue || '',
       selectedOptions: Array.isArray(log.selectedOptions) ? log.selectedOptions : [],
+      // detailType-ийн шинэ утгууд. applyTaskLogUpdate нь логийг
+      // `{ ...existing, ...updates }` гэж нийлүүлдэг тул эдгээрийг нэмэхэд
+      // хадгалалтын логик өөрчлөгдөхгүй — зөвхөн УНШИХ талыг нь энд нээнэ.
+      hoursValue: Number.isFinite(Number(log.hoursValue)) && log.hoursValue !== null ? Number(log.hoursValue) : null,
+      countValue: Number(log.countValue) || 0,
+      startedAt: log.startedAt || '',
+      endedAt: log.endedAt || '',
     };
   }), [baseTasks, logsForSelectedDate]);
   const completedCount = currentDisplayTasks.filter((task) => task.done).length;
@@ -307,9 +351,12 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     });
   }, [dailyLogs, selectedMemberId, tasksByMember]);
 
-  const handleCreateFamily = async ({ familyName, displayName, avatar = '🙂', extraMembers = [] }) => {
+  const handleCreateFamily = async ({ familyName, displayName, avatar = '🙂', extraMembers = [], groupType = 'family' }) => {
     if (!isFirebaseConfigured || !user || !db) return setFamilySetupError('Firebase config болон login шаардлагатай.');
     const safeFamilyName = (familyName || '').trim() || 'Миний гэр бүл';
+    // Танигдаагүй/хоосон утга АЮУЛГҮЙ 'family' рүү буулгана — доор бичих
+    // getBaseTasks(safeGroupType, …) дуудлагууд ямагт хүчинтэй пак сонгоно.
+    const safeGroupType = normalizeGroupType(groupType);
     const safeDisplayName = (displayName || '').trim() || user.email || 'Parent';
     const preparedExtraMembers = (Array.isArray(extraMembers) ? extraMembers : [])
       .filter((member) => member?.name?.trim())
@@ -344,24 +391,50 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
         transaction.set(familyRef, {
           familyId: familyRef.id,
           familyName: safeFamilyName,
+          groupType: safeGroupType,
           inviteCode,
           ownerUid: user.uid,
+          // "1 сарын аялал"-ын мөчлөг эхэлсэн өдөр (PLAN_V2 §6). Шинэ сар
+          // эхлүүлэх бүрд шинэчлэгдэнэ. createdAt нь serverTimestamp тул
+          // клиент талд шууд уншигдахгүй байх мөч бий — тиймээс огнооны
+          // түлхүүрийг ТУСДАА, энгийн string-ээр хадгална.
+          cycleStartKey: getTodayDateKey(),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+        // Эзний role: groupType-ийн 'admin' string ('family'→'parent',
+        // бусад→'admin'). canManage нь ['parent','admin'] хоёуланг зөвшөөрдөг
+        // тул энэ өөрчлөлт хуучин 'family' урсгалд ХЭВИЙН ажиллана.
+        const ownerRole = getGroupTypeMeta(safeGroupType).roles.admin;
         transaction.set(memberRef, {
           uid: user.uid,
           name: safeDisplayName,
           avatar,
-          role: 'parent',
+          role: ownerRole,
           points: 0,
           streak: 0,
           joinedAt: new Date().toISOString(),
           updatedAt: serverTimestamp(),
         });
-        transaction.set(taskRef, { uid: user.uid, tasks: getBaseTasks(false), updatedAt: serverTimestamp() });
-        transaction.set(inviteRef, { code: inviteCode, familyId: familyRef.id, familyName: safeFamilyName, ownerUid: user.uid, active: true, createdAt: serverTimestamp() });
-        transaction.set(userRef, { uid: user.uid, familyId: familyRef.id, displayName: safeDisplayName, avatar, role: 'parent', updatedAt: serverTimestamp() }, { merge: true });
+        transaction.set(taskRef, { uid: user.uid, tasks: getBaseTasks(safeGroupType, false), updatedAt: serverTimestamp() });
+        // Урилгын документэд groupType/maxMembers-ийг ХУУЛЖ хадгална.
+        // Шалтгаан: нэгдэж буй хүн families/{id} баримтыг УНШИХ эрхгүй
+        // (дүрэм: read if isFamilyMember) — харин inviteCodes/{code}-г get
+        // хийж чадна. Тиймээс нэгдэх урсгалд хэрэгтэй мэдээллийг энд байрлуулав.
+        // personal бүлэгт урилга ОГТ хэрэггүй тул шууд идэвхгүй үүснэ —
+        // ингэснээр ганцаараа хөтлөх хөтөлбөрт хэн ч нэгдэж чадахгүй.
+        const inviteMaxMembers = getGroupTypeMeta(safeGroupType).maxMembers;
+        transaction.set(inviteRef, {
+          code: inviteCode,
+          familyId: familyRef.id,
+          familyName: safeFamilyName,
+          ownerUid: user.uid,
+          groupType: safeGroupType,
+          maxMembers: inviteMaxMembers,
+          active: inviteMaxMembers > 1,
+          createdAt: serverTimestamp(),
+        });
+        transaction.set(userRef, { uid: user.uid, familyId: familyRef.id, displayName: safeDisplayName, avatar, role: ownerRole, updatedAt: serverTimestamp() }, { merge: true });
       });
 
       // Головой transaction амжилттай болсны дараах seed batch-ууд. Эдгээр нь
@@ -390,7 +463,7 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
               uid: member.uid,
               name: member.name,
               avatar: member.avatar,
-              role: 'child',
+              role: getGroupTypeMeta(safeGroupType).roles.member,
               points: 0,
               streak: 0,
               joinedAt: new Date().toISOString(),
@@ -399,7 +472,10 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
             });
             memberBatch.set(doc(db, 'families', familyRef.id, 'tasks', member.uid), {
               uid: member.uid,
-              tasks: getBaseTasks(true),
+              // isKid=true семантик зөвхөн 'family' төрөлд ач холбогдолтой
+              // (нойрны зөвлөмж өөрчлөгдөнө) — бусад төрөлд аюулгүйгээр
+              // үл тоомсорлогдоно.
+              tasks: getBaseTasks(safeGroupType, true),
               updatedAt: serverTimestamp(),
             });
           });
@@ -441,12 +517,33 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
         const familyRef = doc(db, 'families', targetFamilyId);
         const familySnap = await transaction.get(familyRef);
         if (!familySnap.exists()) throw new Error('family-not-found');
+        // Дадлын багц бол ЗОРИЛГО гэр бүлийнх — нэгдэж буй хүн биш. Тухайн
+        // гэр бүл ямар groupType-тэйг familySnap-аас уншина.
+        // Урилгын баримт нь эхний эх сурвалж (унших эрх баталгаатай), гэр
+        // бүлийн баримт нь нөөц зам (хуучин урилгад groupType байхгүй).
+        const targetGroupType = normalizeGroupType(
+          inviteSnap.data()?.groupType || familySnap.data()?.groupType
+        );
+
+        // Бүлгийн хязгаараас хэтэрсэн эсэх. Гишүүдийн жагсаалтыг нэгдэхээс
+        // ӨМНӨ унших эрхгүй тул тоог урилгын баримт дээрх memberCount-оос
+        // шалгана (админы апп доорх useEffect-ээр шинэчилж байдаг).
+        const inviteMax = Number(inviteSnap.data()?.maxMembers) || 0;
+        const inviteCount = Number(inviteSnap.data()?.memberCount) || 0;
+        if (inviteMax > 0 && inviteCount >= inviteMax) throw new Error('family-full');
 
         const memberRef = doc(db, 'families', targetFamilyId, 'members', user.uid);
         const taskRef = doc(db, 'families', targetFamilyId, 'tasks', user.uid);
         const taskSnap = await transaction.get(taskRef);
         const userRef = doc(db, 'users', user.uid);
 
+        // FIRESTORE ДҮРЭМ ЗААВАЛ 'member' ЛИТЕРАЛ шаарддаг (members/{uid}
+        // create дүрлийн 3-р зам: `request.resource.data.role == 'member'`,
+        // FIRESTORE_RULES.txt) — groupType-ийн member string-ийг хэрэглэвэл
+        // family-с бусад бүх төрөлд утга ЯГ 'member' тул нөлөөгүй, харин
+        // family горимд ч энд ЗОРИУДААР 'member' үлдээнэ ('child' биш) —
+        // учир нь энэ бол ӨӨРӨӨ урилгаар нэгдэж буй насанд хүрсэн хүн,
+        // handleCreateFamily-ийн 'child' профайлаас ӨӨР эрхийн зам юм.
         transaction.set(memberRef, {
           uid: user.uid,
           name: safeDisplayName,
@@ -462,12 +559,16 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
           joinedWithInviteCode: cleanCode,
           updatedAt: serverTimestamp(),
         }, { merge: true });
-        if (!taskSnap.exists()) transaction.set(taskRef, { uid: user.uid, tasks: getBaseTasks(false), updatedAt: serverTimestamp() });
+        if (!taskSnap.exists()) transaction.set(taskRef, { uid: user.uid, tasks: getBaseTasks(targetGroupType, false), updatedAt: serverTimestamp() });
         transaction.set(userRef, { uid: user.uid, familyId: targetFamilyId, displayName: safeDisplayName, avatar, role: 'member', joinedWithInviteCode: cleanCode, updatedAt: serverTimestamp() }, { merge: true });
       });
     } catch (e) {
       console.error('Join family error:', e.code, e.message);
-      const reason = e.message === 'invite-code-not-found' ? 'Ийм invite code-той гэр бүл олдсонгүй.' : 'Гэр бүлд нэгдэхэд алдаа гарлаа.';
+      const reason = e.message === 'invite-code-not-found'
+        ? 'Ийм invite code-той бүлэг олдсонгүй.'
+        : e.message === 'family-full'
+          ? 'Энэ бүлэг дүүрсэн байна — гишүүдийн тоо дээд хязгаартаа хүрсэн.'
+          : 'Бүлэгт нэгдэхэд алдаа гарлаа.';
       setFamilySetupError(`${e.code || e.message || 'unknown'}: ${reason}`);
     } finally {
       setFamilySetupLoading(false);
@@ -478,6 +579,7 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     // Гараас товчоос хамаарахгүй бүх family-хамаатай state-г цэвэрлэнэ —
     // logout эсвэл өөр account руу шилжих үед өмнөх гишүүний meals/rewards/
     // логууд дэлгэцэн дээр цацрагддаг (cross-account bleed) байсан.
+    saveGenerationRef.current += 1;
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
@@ -590,20 +692,37 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     dailyLogsRef.current = nextDailyLogs;
     setDailyLogs(nextDailyLogs);
 
-    const recalculatedStreak = calculateStreak(nextDailyLogs, baseTasks, selectedMemberId, todayKey);
     const currentMembers = membersRef.current || {};
-    const member = currentMembers[selectedMemberId] || {};
-    const prevStats = { points: member.points || 0, streak: member.streak || 0 };
+    const memberForStats = currentMembers[selectedMemberId] || {};
+    const epochKey = memberForStats.streakResetKey || null;
+    const recalculatedStreak = calculateStreak(nextDailyLogs, baseTasks, selectedMemberId, todayKey, epochKey);
+    const prevStats = { points: memberForStats.points || 0, streak: memberForStats.streak || 0 };
     const nextPoints = Math.max(0, prevStats.points + pointsChange);
     const nextMembers = { ...currentMembers, [selectedMemberId]: { ...(currentMembers[selectedMemberId] || {}), points: nextPoints, streak: recalculatedStreak } };
     membersRef.current = nextMembers;
     setMembers(nextMembers);
 
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    const capturedGeneration = saveGenerationRef.current;
+    const capturedMemberId = selectedMemberId;
+    const capturedDateKey = selectedDate;
     saveTimeoutRef.current = setTimeout(async () => {
+      // Generation check: resetMonthlyProgress аль хэдийн шинэ үе эхлүүлсэн бол хуучин төлөвөө бичихгүй
+      if (capturedGeneration !== saveGenerationRef.current) {
+        saveTimeoutRef.current = null;
+        return;
+      }
       try {
-        await persistDailyLog(selectedMemberId, selectedDate, nextUserLog);
-        await commitMemberStats(selectedMemberId, pointsChange, recalculatedStreak);
+        await persistDailyLog(capturedMemberId, capturedDateKey, nextUserLog);
+        if (capturedGeneration !== saveGenerationRef.current) {
+          saveTimeoutRef.current = null;
+          return;
+        }
+        await commitMemberStats(capturedMemberId, pointsChange, recalculatedStreak);
+        if (capturedGeneration !== saveGenerationRef.current) {
+          saveTimeoutRef.current = null;
+          return;
+        }
         saveTimeoutRef.current = null;
         // Тэмдэглэсэн амжилтын feedback зөвхөн persistence АМЖИЛТТАЙ
         // болсны ДАРАА гардаг — сүлжээ уналаа гэхэд confetti/haptic хийж,
@@ -618,9 +737,13 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
           }
         }
       } catch (e) {
+        if (capturedGeneration !== saveGenerationRef.current) {
+          saveTimeoutRef.current = null;
+          return;
+        }
         console.error('Task save error:', e.code, e.message);
         saveTimeoutRef.current = null;
-        revertFailedTaskSave(selectedDate, selectedMemberId, existingUserLog, nextUserLog, prevStats, { points: nextPoints, streak: recalculatedStreak });
+        revertFailedTaskSave(capturedDateKey, capturedMemberId, existingUserLog, nextUserLog, prevStats, { points: nextPoints, streak: recalculatedStreak });
         onSaveError?.('Дадлын мэдээллийг хадгалж чадсангүй. Интернэт холболтоо шалгаад дахин оролдоно уу.');
       }
     }, 350);
@@ -649,7 +772,17 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     const isNowDone = forceState !== null ? Boolean(forceState) : !currentLog.done;
     if (Boolean(currentLog.done) === isNowDone) return; // давхар даралт → idempotent
     const points = Number(task.points || 10);
-    applyTaskLogUpdate(id, { done: isNowDone }, isNowDone ? points : -points);
+    const updates = { done: isNowDone };
+    // Эхний цаг нь "яг одоогийн цаг" (хэрэглэгчийн хүсэлт №6). Зөвхөн:
+    //   - дадлыг ДУУСГАЖ байгаа үед (буцаахад биш),
+    //   - урьд нь цаг тэмдэглэгдээгүй бол (дахин дарахад дарж бичихгүй),
+    //   - сонгосон өдөр нь ӨНӨӨДӨР бол — өчигдрийн логийг өнөөдрийн цагаар
+    //     тамгалах нь худал бичлэг үүсгэнэ.
+    if (isNowDone && task.trackTime !== false && !currentLog.startedAt && selectedDate === todayKey) {
+      const now = new Date();
+      updates.startedAt = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    }
+    applyTaskLogUpdate(id, updates, isNowDone ? points : -points);
   };
 
   const toggleOption = (taskId, optionStr) => {
@@ -700,6 +833,85 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     }
   };
 
+  // ── Зураг: гишүүний аватар ба гэр бүлийн нүүрний зураг ────────────────
+  // Зургийг Firebase Storage руу эхлээд байршуулаад (services/photos.js),
+  // ЗӨВХӨН гарч ирсэн URL-ыг энд Firestore-д бичнэ. Storage-ийн upload
+  // амжилтгүй бол Firestore огт хөндөгдөхгүй — "зураг байхгүй URL" үүсэхгүй.
+  const saveMemberPhoto = async (uid, photoURL) => {
+    if (!isFirebaseConfigured || !db || !familyId || !uid) return { ok: true, local: true };
+    // Optimistic: listener эргэж ирэхээс өмнө шинэ зураг харагдана.
+    const prevMembers = membersRef.current || {};
+    const nextMembers = { ...prevMembers, [uid]: { ...(prevMembers[uid] || {}), photoURL } };
+    membersRef.current = nextMembers;
+    setMembers(nextMembers);
+    try {
+      await setDoc(doc(db, 'families', familyId, 'members', uid), { photoURL, updatedAt: serverTimestamp() }, { merge: true });
+      return { ok: true };
+    } catch (e) {
+      console.error('Save member photo error:', e.code, e.message);
+      membersRef.current = prevMembers;
+      setMembers(prevMembers);
+      // Дүрэм дээр 'photoURL' нь өөрийн гишүүний засварлаж болох талбарын
+      // жагсаалтад байх ёстой (FIRESTORE_RULES.txt, members/{uid} update).
+      return { ok: false, message: 'Зургийг хадгалж чадсангүй. Firestore дүрмээ шинэчилсэн эсэхээ шалгана уу.' };
+    }
+  };
+
+  const saveFamilyCover = async (photoURL) => {
+    if (!isFirebaseConfigured || !db || !familyId) return { ok: true, local: true };
+    if (!canManage) return { ok: false, message: 'Нүүрний зургийг зөвхөн эцэг эх/админ солино.' };
+    try {
+      await setDoc(doc(db, 'families', familyId), { coverPhotoURL: photoURL, updatedAt: serverTimestamp() }, { merge: true });
+      return { ok: true };
+    } catch (e) {
+      console.error('Save family cover error:', e.code, e.message);
+      return { ok: false, message: 'Нүүрний зургийг хадгалж чадсангүй. Дахин оролдоно уу.' };
+    }
+  };
+
+  // Архивын жагсаалт — LIVE listener БИШ, зөвхөн хэрэглэгч "Архив" товч
+  // дарах үед НЭГ удаа татна (PLAN_V2.md §4.2). Сар бүр ганцхан жижиг
+  // баримт нэмэгддэг тул хуудаслалт (pagination) одоохондоо хэрэггүй.
+  // Хувь хүний илчлэгийн зорилтод хэрэглэгдэх СОНГОЛТТОЙ биеийн үзүүлэлт.
+  // ЗӨВХӨН нэвтэрсэн хүн ӨӨРИЙНХӨӨ баримтыг засна — Firestore дүрэм ч
+  // яг үүнийг л зөвшөөрдөг тул UI болон дүрэм нэг invariant баримтална.
+  // Хоосон утга дамжуулбал талбарыг цэвэрлэнэ (null) — хэрэглэгч мэдээллээ
+  // буцааж устгах боломжтой байх ёстой.
+  const saveMemberProfile = useCallback(async (profile) => {
+    if (!db || !familyId || !user?.uid) return { ok: false, message: 'Нэвтэрч орно уу.' };
+    const toNumOrNull = (value) => {
+      if (value === '' || value === null || value === undefined) return null;
+      const num = Number(value);
+      return Number.isFinite(num) && num > 0 ? num : null;
+    };
+    const payload = {
+      birthYear: toNumOrNull(profile?.birthYear),
+      heightCm: toNumOrNull(profile?.heightCm),
+      weightKg: toNumOrNull(profile?.weightKg),
+      sex: profile?.sex === 'male' || profile?.sex === 'female' ? profile.sex : null,
+      activityLevel: profile?.activityLevel || null,
+      updatedAt: serverTimestamp(),
+    };
+    try {
+      await setDoc(doc(db, 'families', familyId, 'members', user.uid), payload, { merge: true });
+      return { ok: true };
+    } catch (e) {
+      console.error('Save member profile error:', e.code, e.message);
+      return { ok: false, message: 'Мэдээллийг хадгалж чадсангүй. Дахин оролдоно уу.' };
+    }
+  }, [familyId, user?.uid]);
+
+  const listArchives = useCallback(async () => {
+    if (!isFirebaseConfigured || !db || !familyId) return { ok: true, archives: [] };
+    try {
+      const snap = await getDocs(query(collection(db, 'families', familyId, 'archives'), orderBy('monthKey', 'desc')));
+      return { ok: true, archives: snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })) };
+    } catch (e) {
+      console.error('List archives error:', e.code, e.message);
+      return { ok: false, message: 'Архивыг ачаалж чадсангүй. Дахин оролдоно уу.', archives: [] };
+    }
+  }, [familyId]);
+
   const saveTasksForMember = async (uid, tasks) => {
     if (!isFirebaseConfigured || !db || !familyId || !uid) return;
     const normalized = tasks.map(normalizeTask);
@@ -716,6 +928,7 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     if (!isFirebaseConfigured || !db || !familyId) return { ok: true, local: true };
     const batch = writeBatch(db);
     if (updates.meals) batch.set(doc(db, 'families', familyId, 'meals', 'current'), { meals: updates.meals, updatedAt: serverTimestamp() }, { merge: true });
+    if (updates.foodLogs) batch.set(doc(db, 'families', familyId, 'nutrition', 'foodLogs'), { logs: updates.foodLogs, updatedAt: serverTimestamp() }, { merge: true });
     if (Array.isArray(updates.familyRewards)) {
       updates.familyRewards.forEach((reward, index) => batch.set(doc(db, 'families', familyId, 'rewards', reward.id), { ...reward, order: index, updatedAt: serverTimestamp() }, { merge: true }));
     }
@@ -728,6 +941,47 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
       console.error('saveToCloud error:', e.code, e.message);
       return { ok: false, message: 'Өөрчлөлтийг хадгалж чадсангүй. Интернэт холболтоо шалгаад дахин оролдоно уу.' };
     }
+  };
+
+  // Гэрээ saveToCloud-той адил: амжилтгүй бол { ok:false, message } буцаана,
+  // local state-ээ хуучин утга руугаа буцаана — UI "хадгалсан" гэж худал
+  // харагдахгүй байх зорилготой.
+  const addFoodEntry = async (dateKey, entry) => {
+    if (!dateKey || !entry) return { ok: false };
+    const prevLogs = foodLogs;
+    const dayEntries = [...(foodLogs?.[dateKey] || []), entry];
+    const nextLogs = { ...(foodLogs || {}), [dateKey]: dayEntries };
+    setFoodLogs(nextLogs);
+    let result;
+    try {
+      result = await saveToCloud({ foodLogs: nextLogs });
+    } catch {
+      result = { ok: false };
+    }
+    if (!result?.ok) {
+      setFoodLogs(prevLogs);
+      return { ok: false, message: result?.message || 'Хоолны бүртгэл хадгалагдсангүй. Дахин оролдоно уу.' };
+    }
+    return { ok: true };
+  };
+
+  const removeFoodEntry = async (dateKey, entryId) => {
+    if (!dateKey || !entryId) return { ok: false };
+    const prevLogs = foodLogs;
+    const dayEntries = (foodLogs?.[dateKey] || []).filter((item) => item.id !== entryId);
+    const nextLogs = { ...(foodLogs || {}), [dateKey]: dayEntries };
+    setFoodLogs(nextLogs);
+    let result;
+    try {
+      result = await saveToCloud({ foodLogs: nextLogs });
+    } catch {
+      result = { ok: false };
+    }
+    if (!result?.ok) {
+      setFoodLogs(prevLogs);
+      return { ok: false, message: result?.message || 'Хоолны бүртгэл хадгалагдсангүй. Дахин оролдоно уу.' };
+    }
+    return { ok: true };
   };
 
   const handleRedeemReward = async (rewardId) => {
@@ -762,38 +1016,32 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
   // try/catch-аар барьна — эс тэгвэл UI switch "ON" харагдаад мэдэгдэл огт
   // ирэхгүй нөхцөл үүснэ.
   const saveNotificationSettings = async (nextSettings) => {
+    const merged = { ...notificationSettings, ...nextSettings };
     const safe = {
-      enabled: Boolean(nextSettings.enabled),
-      hour: Math.min(Math.max(Number(nextSettings.hour ?? 20), 0), 23),
-      minute: Math.min(Math.max(Number(nextSettings.minute ?? 30), 0), 59),
+      enabled: Boolean(merged.enabled),
+      hour: Math.min(Math.max(Number(merged.hour ?? 20), 0), 23),
+      minute: Math.min(Math.max(Number(merged.minute ?? 30), 0), 59),
+      water: Boolean(merged.water),
     };
 
-    if (safe.enabled) {
-      let scheduleResult;
-      try {
-        scheduleResult = await scheduleDailyHabitReminder(safe);
-      } catch (e) {
-        console.error('Failed to schedule habit reminders', e);
-        return { ok: false, message: 'Мэдэгдэл товлох үед алдаа гарлаа. Дахин оролдоно уу.' };
+    let scheduleResult;
+    try {
+      scheduleResult = await applyNotificationSettings({
+        habit: { enabled: safe.enabled, hour: safe.hour, minute: safe.minute },
+        water: { enabled: safe.water },
+      });
+    } catch (e) {
+      console.error('Failed to apply notification settings', e);
+      return { ok: false, message: 'Мэдэгдэл товлох үед алдаа гарлаа. Дахин оролдоно уу.' };
+    }
+    if (!scheduleResult?.ok) {
+      if (scheduleResult?.code === 'PERMISSION_DENIED') {
+        return {
+          ok: false,
+          message: 'Мэдэгдлийн зөвшөөрөл олгогдсонгүй. Төхөөрөмжийн Settings → Notifications → Family Habit дотор зөвшөөрч, дахин идэвхжүүлнэ үү.',
+        };
       }
-      if (!scheduleResult?.ok) {
-        if (scheduleResult?.code === 'PERMISSION_DENIED') {
-          return {
-            ok: false,
-            message: 'Мэдэгдлийн зөвшөөрөл олгогдсонгүй. Төхөөрөмжийн Settings → Notifications → Family Habit дотор зөвшөөрч, дахин идэвхжүүлнэ үү.',
-          };
-        }
-        return { ok: false, message: 'Мэдэгдлийн модуль ажиллахгүй байна. Аппыг шинэчилж дахин оролдоно уу.' };
-      }
-    } else {
-      // Унтраахад: цуцлах амжилттай болохоор state-ээ солино — эс тэгвэл
-      // UI "OFF" харагдаад санамж ирсээр байх эрсдэлтэй.
-      try {
-        await cancelHabitReminders();
-      } catch (e) {
-        console.error('Failed to cancel habit reminders', e);
-        return { ok: false, message: 'Мэдэгдэл цуцлах үед алдаа гарлаа. Дахин оролдоно уу.' };
-      }
+      return { ok: false, message: 'Мэдэгдлийн модуль ажиллахгүй байна. Аппыг шинэчилж дахин оролдоно уу.' };
     }
 
     setNotificationSettings(safe);
@@ -821,6 +1069,15 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
   // локал state-г шинэчилнэ — failure үед локал огт өөрчлөгдөхгүй (rollback
   // шаардлагагүй). Streak сэрэхгүй: цэвэрлэгдсэн өдрүүд isDayComplete=false
   // болохоор calculateStreak тэнд зогсоно.
+  // Тухайн YYYY-MM-DD хоёр огнооны хоорондох (хамт орсон) хоногийн тоо.
+  const daysBetweenInclusive = (startKey, endKey) => {
+    const [sy, sm, sd] = startKey.split('-').map(Number);
+    const [ey, em, ed] = endKey.split('-').map(Number);
+    const start = new Date(sy, sm - 1, sd);
+    const end = new Date(ey, em - 1, ed);
+    return Math.round((end - start) / 86400000) + 1;
+  };
+
   const resetMonthlyProgress = async () => {
     if (!isFirebaseConfigured || !db || !familyId) {
       return { ok: false, message: 'Firebase тохиргоогүй тул шинэ сар эхлүүлж чадсангүй.' };
@@ -828,11 +1085,84 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     if (!canManage) {
       return { ok: false, message: 'Шинэ сар эхлүүлэх эрх зөвхөн эцэг эх/админд байна.' };
     }
+    // Pending debounced бичилтүүдийг хүчингүй болгоно — clearTimeout дангаараа хангалтгүй,
+    // аль хэдийн эхэлсэн async promise нь reset-ийн дараа хуучин төлөвөө бичих эрсдэлтэй.
+    saveGenerationRef.current += 1;
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
     const monthStartKey = `${todayKey.split('-')[0]}-${todayKey.split('-')[1]}-01`;
     const inPeriod = (dateKey) => dateKey >= monthStartKey && dateKey <= todayKey;
-    const ops = [];
+
+    // ── АЮУЛГҮЙ БАЙДЛЫН ЗАСВАР (2026-09-12): ХАМГИЙН ЭХЭНД snapshot бичнэ ──
+    // Өмнө нь энэ функц тухайн сарын БҮХ dailyLog-ийг шууд {tasks:{}}
+    // болгож УСТГАДАГ байсан — "шинэ сар эхлүүлэх" товчийг дарсан хүн
+    // өнгөрсөн сарынхаа бүх түүхийг эргэлт буцалтгүй алддаг байв. Одоо
+    // устгахаас ӨМНӨ families/{id}/archives/{YYYY-MM} баримтад дүнг
+    // хадгална. Энэ бичилт АМЖИЛТГҮЙ бол доорх устгах алхам огт хийгдэхгүй
+    // — "архивгүйгээр устгах" боломжгүй болгосон.
+    const dayCount = Math.max(daysBetweenInclusive(monthStartKey, todayKey), 1);
+    const completionByUid = {};
     memberList.forEach((member) => {
-      ops.push({ ref: doc(db, 'families', familyId, 'members', member.uid), data: { points: 0, streak: 0, updatedAt: serverTimestamp() } });
+      const required = (tasksByMember[member.uid] || []).filter((task) => task.required !== false);
+      let completed = 0;
+      Object.keys(dailyLogsRef.current || {}).forEach((dateKey) => {
+        if (!inPeriod(dateKey)) return;
+        const taskLogs = dailyLogsRef.current[dateKey]?.[member.uid]?.tasks || {};
+        completed += required.filter((task) => taskLogs?.[task.id]?.done).length;
+      });
+      const possible = required.length * dayCount;
+      completionByUid[member.uid] = possible > 0 ? Math.round((completed / possible) * 100) : 0;
+    });
+    const archiveId = monthStartKey.slice(0, 7); // "YYYY-MM"
+    const archiveData = {
+      monthKey: archiveId,
+      periodStart: monthStartKey,
+      periodEnd: todayKey,
+      dayCount,
+      totalPoints: memberList.reduce((sum, member) => sum + (member.points || 0), 0),
+      members: memberList.map((member) => ({
+        uid: member.uid,
+        name: member.name || '',
+        avatar: member.avatar || '🙂',
+        points: member.points || 0,
+        streak: member.streak || 0,
+        completionPct: completionByUid[member.uid] || 0,
+      })),
+      rewards: (familyRewards || []).map((reward) => ({
+        id: reward.id,
+        name: reward.name || '',
+        target: reward.target || 0,
+        status: reward.status || 'locked',
+        redeemedAt: reward.redeemedAt || null,
+      })),
+      archivedAt: serverTimestamp(),
+    };
+    try {
+      await setDoc(doc(db, 'families', familyId, 'archives', archiveId), archiveData, { merge: true });
+    } catch (e) {
+      console.error('Monthly archive snapshot error:', e.code, e.message);
+      // ЗОГСООНО — архивлаагүй өгөгдлийг устгахгүй. Хэрэглэгчид тодорхой
+      // тайлбар өгнө: юу ч устаагүй, дараа дахин оролдож болно.
+      return { ok: false, message: 'Архивлаж чадсангүй тул шинэ сар эхлүүлээгүй — өгөгдөл хэвээрээ. Дахин оролдоно уу.' };
+    }
+
+    // Шинэ 30 хоногийн мөчлөг ЭНЭ өдрөөс эхэлнэ. Архив амжилттай хадгалагдсаны
+    // ДАРАА л бичнэ — архивлаж чадаагүй бол дээр функц аль хэдийн зогссон.
+    try {
+      await setDoc(doc(db, 'families', familyId), { cycleStartKey: todayKey, updatedAt: serverTimestamp() }, { merge: true });
+    } catch (e) {
+      // Эгзэгтэй биш: аялалын тоолуур хуучин огноогоор үргэлжилнэ, бусад
+      // бүх зүйл хэвийн. Тиймээс reset-ийг ЗОГСООХГҮЙ.
+      console.warn('Cycle start update error:', e?.code, e?.message);
+    }
+
+    const ops = [];
+    // Streak epoch: энэ өдрөөс өмнөх түүх рүү streak тооцохгүй (сарын эхлэл).
+    // Өмнөх сарын complete логууд хэвээр үлдэнэ ч streak дахин сэрэхгүй.
+    memberList.forEach((member) => {
+      ops.push({ ref: doc(db, 'families', familyId, 'members', member.uid), data: { points: 0, streak: 0, streakResetKey: monthStartKey, updatedAt: serverTimestamp() } });
     });
     familyRewards.forEach((reward) => {
       if (reward.status === 'redeemed' || reward.redeemedAt) {
@@ -856,11 +1186,13 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
       }
     } catch (e) {
       console.error('Reset monthly progress error:', e.code, e.message);
-      return { ok: false, message: 'Шинэ сарыг эхлүүлэхэд алдаа гарлаа. Өөрчлөлт хийгдээгүй — дахин оролдоно уу.' };
+      // Архив АЛЬ ХЭДИЙН бичигдсэн тул түүх алдагдаагүй — гэхдээ points/
+      // dailyLogs хэсэгчлэн устсан байж болзошгүйг хэрэглэгчид хэлнэ.
+      return { ok: false, message: 'Шинэ сарыг эхлүүлэхэд алдаа гарлаа (архив хадгалагдсан, гэхдээ дахин оролдоно уу).' };
     }
 
     const resetMembers = {};
-    memberList.forEach((member) => { resetMembers[member.uid] = { ...member, points: 0, streak: 0 }; });
+    memberList.forEach((member) => { resetMembers[member.uid] = { ...member, points: 0, streak: 0, streakResetKey: monthStartKey }; });
     membersRef.current = resetMembers;
     setMembers(resetMembers);
 
@@ -905,6 +1237,9 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     dailyLogs,
     meals,
     setMeals,
+    foodLogs,
+    addFoodEntry,
+    removeFoodEntry,
     familyRewards,
     setFamilyRewards,
     notificationSettings,
@@ -924,6 +1259,10 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     currentMood,
     weeklyReport,
     weeklyTrend,
+    saveMemberPhoto,
+    saveFamilyCover,
+    listArchives,
+    saveMemberProfile,
     handleCreateFamily,
     handleJoinFamily,
     resetFamilyState,

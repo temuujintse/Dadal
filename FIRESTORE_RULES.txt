@@ -73,7 +73,8 @@ service cloud.firestore {
     match /families/{familyId} {
       allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
       allow read: if isFamilyMember(familyId);
-      allow update: if isAdmin(familyId);
+      // ownerUid is immutable — prevents admin from hijacking ownership via update
+      allow update: if isAdmin(familyId) && request.resource.data.ownerUid == resource.data.ownerUid;
       allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
 
       match /members/{uid} {
@@ -114,10 +115,23 @@ service cloud.firestore {
               && inviteGrants(familyId, request.resource.data.joinedWithInviteCode))
         );
 
-        allow update: if isAdmin(familyId)
+        // uid is immutable — prevents document ID spoofing via admin update
+        allow update: if (isAdmin(familyId) && request.resource.data.uid == resource.data.uid)
           || (signedIn()
             && uid == request.auth.uid
-            && request.resource.data.diff(resource.data).changedKeys().hasOnly(['name', 'points', 'streak', 'updatedAt']));
+            && request.resource.data.diff(resource.data).changedKeys().hasOnly(['name', 'avatar', 'photoURL', 'points', 'streak', 'updatedAt', 'birthYear', 'sex', 'heightCm', 'weightKg', 'activityLevel']));
+        // birthYear/sex/heightCm/weightKg/activityLevel нэмэгдэв (2026-09-12):
+        // хувь хүний илчлэгийн зорилт (Mifflin-St Jeor) тооцоход хэрэглэнэ.
+        // ЗӨВХӨН ӨӨРӨӨ бөглөнө — админ ч бусдын биеийн үзүүлэлтийг оруулахгүй
+        // (`isAdmin` зам нь бүх талбарыг зөвшөөрдөг ч UI үүнийг санал болгохгүй).
+        // Бүгд СОНГОЛТТОЙ: бөглөөгүй бол ерөнхий 2000 ккал хэвээр үлдэнэ.
+        //
+        // 'avatar' болон 'photoURL' нэмэгдэв (2026-09-12): гишүүн өөрийнхөө
+        // emoji аватар болон профайл зургаа солих боломжтой байх ёстой.
+        // Өмнө нь энэ жагсаалтад байгаагүй тул энгийн гишүүн зургаа
+        // оруулахад бичилт ЧИМЭЭГҮЙ татгалзаж, зөвхөн эцэг эх/админд
+        // ажилладаг байв. Хоёулаа зөвхөн харагдах байдалд нөлөөлнө —
+        // эрх, оноонд огт нөлөөлөхгүй тул аюулгүйн эрсдэлгүй.
         // ЗАНАЛХИЙЛЭЛ ҮЛДСЭН: гишүүн өөрийн `points`/`streak`-ийг дурын утга
         // болгож бичиж чадна (жишээ нь 999999 оноо → шагнал шууд нээгдэнэ).
         // Энэ бол аюулгүй байдлын биш, тоглоомын шударга байдлын асуудал.
@@ -162,6 +176,25 @@ service cloud.firestore {
         // өөрчилдөг болгох бол UI болон дүрмийг ХАМТ өөрчлөх ёстой.
         allow read: if isFamilyMember(familyId);
         allow create, update: if isFamilyMember(familyId);
+        allow delete: if isAdmin(familyId);
+      }
+
+      match /nutrition/{docId} {
+        // Хоолны бүртгэл (foodLogs): settings-тэй адил ЗОРИУДААР дурын гишүүн
+        // бичиж болно — гэр бүлийн хэн ч өдрийн идсэн хоолоо нэмж/устгаж
+        // чадна, зөвхөн эцэг эх биш.
+        allow read: if isFamilyMember(familyId);
+        allow create, update: if isFamilyMember(familyId);
+        allow delete: if isAdmin(familyId);
+      }
+
+      // Сар бүрийн архив (2026-09-12 нэмэгдэв). resetMonthlyProgress
+      // устгахаас ӨМНӨ ЭНД snapshot бичдэг болсон (useFamilyData.js).
+      // Зөвхөн admin бичнэ — гишүүн бүр өөрийн дүнг чагтлаж чадахгүй байх
+      // ёстой тул members/{uid} дүрмийн адил чанга.
+      match /archives/{archiveId} {
+        allow read: if isFamilyMember(familyId);
+        allow create, update: if isAdmin(familyId);
         allow delete: if isAdmin(familyId);
       }
     }

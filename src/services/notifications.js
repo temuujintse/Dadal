@@ -22,18 +22,48 @@ if (Notifications?.setNotificationHandler) {
   });
 }
 
-const scheduleFriendlyReminder = async ({ title, body, hour, minute }) => Notifications.scheduleNotificationAsync({
+const scheduleFriendlyReminder = async ({ title, body, hour, minute, channelId = 'family-habits' }) => Notifications.scheduleNotificationAsync({
   content: { title, body, sound: true },
-  trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour, minute, channelId: 'family-habits' },
+  trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour, minute, channelId },
 });
 
-export async function scheduleDailyHabitReminder({ hour = 20, minute = 30, morningHour = 8, morningMinute = 0 } = {}) {
+// Өдөрт 5 удаа, сэрүүн цагийн туршид тархсан ус уух сануулга. Одоохондоо
+// цагийг нь хэрэглэгчээр өөрчлүүлэхгүй, зөвхөн асаах/унтраах л боломжтой —
+// тогтмол цагийн жагсаалт хамгийн энгийн бөгөөд найдвартай хувилбар.
+const WATER_REMINDER_TIMES = [
+  { hour: 10, minute: 0 },
+  { hour: 12, minute: 30 },
+  { hour: 15, minute: 0 },
+  { hour: 17, minute: 30 },
+  { hour: 19, minute: 30 },
+];
+
+const WATER_MESSAGES = [
+  'Нэг аяга ус уухаа мартчихсан биз ээ? 💧',
+  'Бага зуур зогсоод ус аягалаарай 💧',
+  'Биед чинь ус хэрэгтэй байна — цэнэглэе 💧',
+  'Ус уух цаг боллоо, гэр бүлээрээ сануулцгаая 💧',
+  'Өдрийн эцсийн ус уулт — өнөөдрийн зорилтоо биелүүлээрэй 💧',
+];
+
+// Гэрээ: { ok:true } эсвэл { ok:false, code, reason }. Дуудагч тал
+// (useFamilyData.saveNotificationSettings) code-ыг шалгаж, enabled:true-г
+// зөвшөөрөл татгалзсан үед ч local/cloud-д бичихээс сэргийлнэ.
+//
+// habit болон water хоёр төрлийн сануулгыг ЭНД НЭГ дор дахин товлоно —
+// учир нь expo-notifications-д "зөвхөн нэг төрлийг цуцлах" API байхгүй,
+// cancelAllScheduledNotificationsAsync нь БҮГДИЙГ арилгадаг. Тиймээс аль
+// нэгийг нь асаах/унтраахад ХОЁУЛАНГ нь одоогийн тохиргооноос нь дахин
+// барина — эс тэгвэл нэгийг унтраахад нөгөөг санамсаргүй устгачихна.
+export async function applyNotificationSettings({ habit, water } = {}) {
   if (!Notifications) return { ok: false, code: 'MODULE_MISSING', reason: 'expo-notifications суулгаагүй байна' };
-  const permission = await Notifications.requestPermissionsAsync();
-  // Зөвшөөрөл олгогдоогүй бол НИГ ялгах кодтой буцаана — дуудагч нь энэ
-  // утгыг үл тоомсорлож enabled:true гэж cloud/local дээр хадгалж болохгүй.
-  if (permission.status !== 'granted') {
-    return { ok: false, code: 'PERMISSION_DENIED', reason: 'notification permission denied' };
+
+  const wantsAny = Boolean(habit?.enabled) || Boolean(water?.enabled);
+  if (wantsAny) {
+    const permission = await Notifications.requestPermissionsAsync();
+    if (permission.status !== 'granted') {
+      return { ok: false, code: 'PERMISSION_DENIED', reason: 'notification permission denied' };
+    }
   }
 
   if (Platform.OS === 'android') {
@@ -45,20 +75,33 @@ export async function scheduleDailyHabitReminder({ hour = 20, minute = 30, morni
   }
 
   await Notifications.cancelAllScheduledNotificationsAsync();
-  await scheduleFriendlyReminder({
-    title: 'Өглөөний мэнд, гэр бүл ээ ☀️',
-    body: 'Өнөөдрийн нэг жижиг дадлаа сонгоод өдрөө сайхан эхлүүлээрэй.',
-    hour: morningHour,
-    minute: morningMinute,
-  });
 
-  if (hour !== morningHour || minute !== morningMinute) {
+  if (habit?.enabled) {
+    const morningHour = habit.morningHour ?? 8;
+    const morningMinute = habit.morningMinute ?? 0;
     await scheduleFriendlyReminder({
-      title: 'Өнөөдрийн ялалтаа тэмдэглэе 🌙',
-      body: 'Хийсэн дадлуудаа check хийгээд гэр бүлийн оноогоо нэмээрэй.',
-      hour,
-      minute,
+      title: 'Өглөөний мэнд, гэр бүл ээ ☀️',
+      body: 'Өнөөдрийн нэг жижиг дадлаа сонгоод өдрөө сайхан эхлүүлээрэй.',
+      hour: morningHour,
+      minute: morningMinute,
     });
+    if (habit.hour !== morningHour || habit.minute !== morningMinute) {
+      await scheduleFriendlyReminder({
+        title: 'Өнөөдрийн ялалтаа тэмдэглэе 🌙',
+        body: 'Хийсэн дадлуудаа check хийгээд гэр бүлийн оноогоо нэмээрэй.',
+        hour: habit.hour,
+        minute: habit.minute,
+      });
+    }
+  }
+
+  if (water?.enabled) {
+    await Promise.all(WATER_REMINDER_TIMES.map((time, index) => scheduleFriendlyReminder({
+      title: 'Ус уух цаг 💧',
+      body: WATER_MESSAGES[index % WATER_MESSAGES.length],
+      hour: time.hour,
+      minute: time.minute,
+    })));
   }
 
   return { ok: true };

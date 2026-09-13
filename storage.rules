@@ -1,0 +1,60 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Firebase Storage дүрэм — гишүүний аватар болон гэр бүлийн нүүрний зураг.
+//
+// ЧУХАЛ ХЯЗГААРЛАЛТ: Storage-ийн дүрэм нь Firestore-оос УНШИЖ ЧАДАХГҮЙ
+// (cross-service read зөвхөн Firestore талд байдаг). Тиймээс "энэ хэрэглэгч
+// тухайн гэр бүлийн гишүүн мөн үү?" гэдгийг ЭНД шалгах боломжгүй.
+//
+// Үүнээс үүдэн:
+//   • Унших — нэвтэрсэн ХЭН Ч зургийн ЯГ замыг мэдэж байвал уншиж чадна.
+//     Зам нь familyId (Firestore-ийн random 20 тэмдэгт ID) агуулдаг тул
+//     таах боломжгүй ч, нууцлалын баталгаа биш гэдгийг ойлгох хэрэгтэй.
+//   • Аватар бичих — зөвхөн ӨӨРИЙН uid-тэй зам руу.
+//   • Cover бичих — нэвтэрсэн хэн ч (familyId мэдэж байвал). Энэ нь хамгийн
+//     сул цэг. Хатуу болгох цорын ганц зам бол upload-ыг Cloud Function
+//     дундуур оруулж, тэнд Firestore-оос гишүүнчлэлийг шалгах явдал.
+//
+// Хэмжээ, төрлийн хязгаар нь санамсаргүй том файл болон зураг биш агуулга
+// (видео, архив) оруулахаас сэргийлнэ.
+// ─────────────────────────────────────────────────────────────────────────────
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isImage(maxBytes) {
+      return request.resource.contentType.matches('image/.*')
+        && request.resource.size < maxBytes;
+    }
+
+    match /families/{familyId} {
+
+      // Гишүүний аватар — апп 320px/JPEG болгож шахсаны дараа ~20-40КБ.
+      // 2МБ хязгаар нь шахалт алдаа өгсөн ч багтах өгөөмөр нөөц.
+      match /members/{uid}/{fileName} {
+        allow read: if signedIn();
+        allow write: if signedIn()
+          && request.auth.uid == uid
+          && isImage(2 * 1024 * 1024);
+        allow delete: if signedIn() && request.auth.uid == uid;
+      }
+
+      // Гэр бүлийн нүүрний зураг — 1080px/JPEG, ~150-250КБ.
+      match /{fileName} {
+        allow read: if signedIn();
+        allow write: if signedIn() && isImage(5 * 1024 * 1024);
+        allow delete: if signedIn();
+      }
+    }
+
+    // Бусад бүх зам — хаалттай.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,18 +1,29 @@
 node_modules/
 .expo/
 dist/
+android/
+ios/
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 npm-debug.*
 *.jks
 *.p8
 *.p12
 *.key
+*.pem
 *.mobileprovision
 *.orig.*
 web-build/
 .DS_Store
+# Firebase / EAS debug logs
+firebase-debug.log
+firestore-debug.log
+*-debug.log
+# Service accounts and native config (never commit)
+serviceAccountKey.json
+google-services.json
+GoogleService-Info.plist
 
 # Хуучин тэмдэглэл, задалсан zip зэрэг түр файлууд. Дотор нь төслийн бүтэн
 # хуулбар (src/, package.json) байгаа тул git болон EAS upload-д оруулах ёсгүй.

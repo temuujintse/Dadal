@@ -20,7 +20,9 @@ const iosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || '';
 
 const expoConfig = {
   expo: {
-    name: 'Гэр Бүлийн Дадал',
+    // Апп нь зөвхөн гэр бүлд биш — найзууд, хос, хувь хүнд ч зориулагдсан
+    // болсон тул нэрийг ерөнхий болгов (PLAN_V2 §3.3).
+    name: 'Дадал',
     slug: 'family-habit-rn',
     // Төсөл ХУВИЙН биш, байгууллагын бүртгэлд (tushigakatsukis-team) үүссэн.
     // Ийм үед `owner`-ийг заавал бичнэ — эс тэгвэл EAS нь нэвтэрсэн
@@ -36,6 +38,12 @@ const expoConfig = {
       supportsTablet: false,
       bundleIdentifier: ANDROID_PACKAGE,
       usesAppleSignIn: true,
+      infoPlist: {
+        // Апп нь зөвхөн стандарт HTTPS шифрлэлт ашигладаг тул экспортын
+        // хязгаарлалтаас чөлөөлөгдөнө. Энд нэг удаа зарласнаар App Store
+        // Connect build бүр дээр тэр асуултыг дахин тавихгүй.
+        ITSAppUsesNonExemptEncryption: false,
+      },
     },
     android: {
       package: ANDROID_PACKAGE,
@@ -79,6 +87,19 @@ const expoConfig = {
           color: '#F97316',
         },
       ],
+      // Гишүүний профайл зураг болон гэр бүлийн нүүрний зураг сонгоход
+      // хэрэглэнэ. iOS дээр эдгээр тайлбар МӨРГҮЙ бол App Store шалгалтаас
+      // унана, Android дээр READ_MEDIA_IMAGES зөвшөөрөл нэмэгдэнэ.
+      // Камер хэрэглэхгүй (зөвхөн зургийн сангаас сонгоно) тул
+      // cameraPermission-ыг ЗОРИУДААР false болгож, илүү зөвшөөрөл
+      // асуухаас сэргийлэв.
+      [
+        'expo-image-picker',
+        {
+          photosPermission: 'Гэр бүлийн гишүүдийн профайл зураг оруулахын тулд зургийн сандаа хандах зөвшөөрөл өгнө үү.',
+          cameraPermission: false,
+        },
+      ],
     ],
     scheme: 'familyhabit',
     // `eas init` нь динамик config (app.config.js) руу өөрөө бичиж чаддаггүй
@@ -88,6 +109,17 @@ const expoConfig = {
       eas: {
         projectId: '385dc4bf-551d-488c-ba0d-3bff186140f1',
       },
+    },
+    // EAS Update (expo-updates). `eas build` эдгээрийг өөрөө нэмэх гэсэн ч
+    // динамик config руу бичиж чаддаггүй тул гараар оруулав.
+    // `runtimeVersion.policy: 'appVersion'` — update нь зөвхөн ижил
+    // `version` (одоо 1.0.0) дугаартай build рүү тарна. Native өөрчлөлт
+    // хийвэл version-оо ахиулж, шинэ build гаргах ёстой.
+    updates: {
+      url: 'https://u.expo.dev/385dc4bf-551d-488c-ba0d-3bff186140f1',
+    },
+    runtimeVersion: {
+      policy: 'appVersion',
     },
   },
 };
@@ -99,7 +131,12 @@ if (IOS_CLIENT_ID_RE.test(iosClientId)) {
     /\.apps\.googleusercontent\.com$/i,
     ''
   )}`;
+  // ЧУХАЛ: `...expoConfig.expo.ios.infoPlist`-ээр НИЙЛҮҮЛЖ бичнэ. Өмнө нь энэ
+  // мөр infoPlist-ийг бүтнээр нь дарж бичдэг байсан тул Google client ID
+  // тохируулмагц дээрх ITSAppUsesNonExemptEncryption арчигдаж, App Store
+  // Connect build бүр дээр шифрлэлтийн асуултыг дахин тавьдаг болох байв.
   expoConfig.expo.ios.infoPlist = {
+    ...expoConfig.expo.ios.infoPlist,
     CFBundleURLTypes: [
       {
         CFBundleURLName: 'google-oauth-reverse-client',

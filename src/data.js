@@ -19,14 +19,13 @@ export const defaultFamilyRewards = [
   { id: 'reward_6', name: 'Урамшуулал 6', desc: 'Дараа нэр өгнө...', target: 5000 },
 ];
 
-// Веб хувилбар дээр эдгээрийг CSS gradient ашигладаг байсан (bg-gradient-to-br...).
-// RN дээр Tailwind gradient class ажилладаггүй тул нэг цэвэр өнгөөр орлуулсан.
-// Хожим expo-linear-gradient нэмж gradient сэргээж болно.
+// 3 гол өнгөт систем: BRAND #F97316 (улбар шар) + SURFACE #FFFFFF (цагаан) + BLUE #2563EB (цэнхэр)
+// Шагнал бүрийн ялгаа нь өнгөөр биш — icon/label/layout-аар илэрнэ.
 export const rewardVisuals = {
-  reward_1: { icon: Ticket, bg: '#7c3aed', bar: '#a78bfa', tabColor: '#6d28d9', tabBg: '#ede9fe' },
-  reward_2: { icon: Award, bg: '#ea580c', bar: '#fb923c', tabColor: '#c2410c', tabBg: '#ffedd5' },
-  reward_3: { icon: Utensils, bg: '#0d9488', bar: '#2dd4bf', tabColor: '#0f766e', tabBg: '#ccfbf1' },
-  reward_4: { icon: Gift, bg: '#2563eb', bar: '#60a5fa', tabColor: '#1d4ed8', tabBg: '#dbeafe' },
-  reward_5: { icon: Sparkles, bg: '#c026d3', bar: '#e879f9', tabColor: '#a21caf', tabBg: '#fae8ff' },
-  reward_6: { icon: Flame, bg: '#e11d48', bar: '#fb7185', tabColor: '#be123c', tabBg: '#ffe4e6' },
+  reward_1: { icon: Ticket, bg: '#f97316', bar: '#fb923c', tabColor: '#f97316', tabBg: '#fff7ed' },
+  reward_2: { icon: Award, bg: '#f97316', bar: '#fb923c', tabColor: '#f97316', tabBg: '#fff7ed' },
+  reward_3: { icon: Utensils, bg: '#f97316', bar: '#fb923c', tabColor: '#f97316', tabBg: '#fff7ed' },
+  reward_4: { icon: Gift, bg: '#f97316', bar: '#fb923c', tabColor: '#f97316', tabBg: '#fff7ed' },
+  reward_5: { icon: Sparkles, bg: '#f97316', bar: '#fb923c', tabColor: '#f97316', tabBg: '#fff7ed' },
+  reward_6: { icon: Flame, bg: '#f97316', bar: '#fb923c', tabColor: '#f97316', tabBg: '#fff7ed' },
 };

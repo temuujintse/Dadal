@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { Animated, Dimensions, Text, View } from 'react-native';
 
 const symbols = ['●', '■', '▲', '★', '◆'];
-const palette = ['#f97316', '#facc15', '#22c55e', '#38bdf8', '#a855f7', '#fb7185'];
+// 3 гол өнгөт системд тохирсон confetti: BRAND + BLUE + NAVY accent + warm neutral
+const palette = ['#f97316', '#fb923c', '#2563eb', '#1e293b', '#ffedd5', '#facc15'];
 
 export default function ConfettiBurst({ active }) {
   const progress = useRef(new Animated.Value(0)).current;

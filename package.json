@@ -5,22 +5,28 @@
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "ota": "eas update --channel production",
+    "ota:preview": "eas update --channel preview",
+    "ota:all": "eas update --channel production --platform all"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
-    "expo": "~54.0.0",
+    "expo": "~54.0.37",
     "expo-apple-authentication": "~8.0.8",
     "expo-auth-session": "~7.0.11",
     "expo-clipboard": "~8.0.8",
     "expo-crypto": "~15.0.9",
     "expo-haptics": "~15.0.8",
+    "expo-image-manipulator": "~14.0.7",
+    "expo-image-picker": "~17.0.11",
     "expo-notifications": "~0.32.17",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
+    "expo-updates": "~29.0.20",
     "expo-web-browser": "~15.0.11",
     "firebase": "^12.16.0",
     "lottie-react-native": "~7.3.4",
@@ -37,7 +43,7 @@
     "@firebase/rules-unit-testing": "^5.0.2",
     "babel-preset-expo": "~54.0.10",
     "eslint": "^9.39.5",
-    "eslint-config-expo": "^9.2.0",
+    "eslint-config-expo": "~10.0.0",
     "tailwindcss": "^3.4.19"
   }
 }

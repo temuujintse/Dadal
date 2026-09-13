@@ -17,6 +17,9 @@
       "channel": "preview",
       "env": {
         "APP_ENV": "preview"
+      },
+      "android": {
+        "buildType": "apk"
       }
     },
     "production": {
@@ -29,6 +32,11 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "ascAppId": "6805735405",
+        "appleTeamId": "U55AF34GWF"
+      }
+    }
   }
 }

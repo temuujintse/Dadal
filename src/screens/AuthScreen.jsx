@@ -217,7 +217,7 @@ export default function AuthScreen({ onLogin, onRegister, onGuest, onGoogle, onA
 
           <View className="gap-3">
             <TouchableOpacity onPress={handleGoogle} disabled={busy} className="bg-white border border-gray-200 rounded-3xl p-4 flex-row items-center">
-              <View className="w-12 h-12 rounded-2xl bg-blue-50 items-center justify-center"><Globe size={24} color="#2563eb" /></View>
+              <View className="w-12 h-12 rounded-2xl bg-orange-50 border border-orange-100 items-center justify-center"><Globe size={24} color="#f97316" /></View>
               <Text className="flex-1 ml-4 text-base font-black text-gray-900">Google-ээр үргэлжлүүлэх</Text>
               <ChevronRight size={20} color="#94a3b8" />
             </TouchableOpacity>
@@ -257,7 +257,7 @@ export default function AuthScreen({ onLogin, onRegister, onGuest, onGoogle, onA
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} className="flex-1">
         <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 24 }} keyboardShouldPersistTaps="handled">
           <TouchableOpacity onPress={() => setMode(null)} className="w-11 h-11 rounded-2xl bg-white border border-orange-100 items-center justify-center mb-5"><ArrowLeft size={20} color="#111827" /></TouchableOpacity>
-          <Text className="text-[11px] font-black uppercase text-orange-500 tracking-widest mb-2">Account</Text>
+          <Text className="text-[11px] font-black uppercase text-orange-500 tracking-widest mb-2">Бүртгэл</Text>
           <Text className="text-3xl font-black text-gray-950 mb-2">{isRegister ? 'Email бүртгэл' : 'Тавтай морил'}</Text>
           <Text className="text-sm font-semibold text-gray-500 mb-6">{isRegister ? 'Гурван талбар бөглөөд шууд үргэлжилнэ.' : 'Email, нууц үгээ оруулна.'}</Text>
 
