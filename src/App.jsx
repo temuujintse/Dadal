@@ -272,7 +272,12 @@ function MainApp() {
   const toggleTaskEdit = useCallback(async () => {
     if (!canManage && selectedMemberId !== user?.uid) return;
     if (isEditingTasks) {
-      await saveTasksForMember(selectedMemberId, tempUserTasks || []);
+      const result = await saveTasksForMember(selectedMemberId, tempUserTasks || []);
+      // Хадгалж чадаагүй бол засварын горимоос ГАРАХГҮЙ — хэрэглэгчийн өөрчлөлт алдагдахгүй.
+      if (result && !result.ok) {
+        showToast(result.message);
+        return;
+      }
     } else {
       setTempUserTasks([...baseTasks]);
     }
@@ -387,7 +392,11 @@ function MainApp() {
   const handleAddTask = async () => {
     if (!newTaskText.trim() || !selectedMemberId) return;
     const task = normalizeTask({ id: `task_${Date.now()}`, text: newTaskText.trim(), hasInput: true, inputPlaceholder: 'Тэмдэглэл', points: Number(newTaskPoints || 10), required: newTaskRequired, category: 'general' });
-    await saveTasksForMember(selectedMemberId, [...baseTasks, task]);
+    const result = await saveTasksForMember(selectedMemberId, [...baseTasks, task]);
+    if (result && !result.ok) {
+      showToast(result.message);
+      return; // модал нээлттэй үлдэнэ, бичсэн текст алдагдахгүй
+    }
     setNewTaskText('');
     setNewTaskPoints('10');
     setNewTaskRequired(true);
@@ -409,7 +418,11 @@ function MainApp() {
         required: true,
       })
     );
-    await saveTasksForMember(selectedMemberId, [...baseTasks, ...newTasks]);
+    const result = await saveTasksForMember(selectedMemberId, [...baseTasks, ...newTasks]);
+    if (result && !result.ok) {
+      showToast(result.message);
+      return;
+    }
     showToast(`${newTasks.length} дадал нэмэгдлээ ✨`, 2500);
   }, [selectedMemberId, baseTasks, saveTasksForMember]);
 

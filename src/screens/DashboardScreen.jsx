@@ -547,7 +547,7 @@ const DashboardScreen = memo(function DashboardScreen({
       </ScrollView>
       ) : null}
 
-      <View className="rounded-[30px] bg-gray-950 p-5 overflow-hidden">
+      <View className="rounded-[30px] bg-sky-950 p-5 overflow-hidden">
         <View className="absolute w-40 h-40 rounded-full bg-orange-500/20 -right-12 -top-16" />
         <View className="flex-row items-center justify-between">
           <View className="flex-1 pr-3">

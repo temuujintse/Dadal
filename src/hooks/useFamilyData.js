@@ -19,6 +19,7 @@ import { normalizeTask, getBaseTasks, defaultNotificationSettings } from '../con
 import { normalizeGroupType, getGroupTypeMeta } from '../constants/groupTypes';
 import { formatDateKey, getTodayDateKey, getWeekAgoKeys, dayNamesShort } from '../utils/dates';
 import { calculateStreak } from '../utils/streak';
+import { getCycleStartKey } from '../utils/journey';
 import { sanitizeInviteCode, generateInviteCode } from '../utils/invite';
 import { applyNotificationSettings } from '../services/notifications';
 import { successFeedback, selectionFeedback } from '../services/feedback';
@@ -66,6 +67,9 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
   const [notificationSettings, setNotificationSettings] = useState(defaultNotificationSettings);
 
   const saveTimeoutRef = useRef(null);
+  // Debounce хийгдэж буй (хараахан серверт бичигдээгүй) task хадгалалт.
+  // { key, generation, memberId, dateKey, userLog, pointsDelta, streak, ... }
+  const pendingSaveRef = useRef(null);
   // Generation token: resetMonthlyProgress нь бүх pending debounced бичилтийг хүчингүй болгоно.
   // clearTimeout дангаараа хангалтгүй — аль хэдийн эхэлсэн async promise нь reset-ийн дараа ч хуучин төлөвөө бичих эрсдэлтэй.
   const saveGenerationRef = useRef(0);
@@ -330,7 +334,9 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
         perMember[member.uid] = (perMember[member.uid] || 0) + doneCount;
       });
     });
-    const bestUid = Object.entries(perMember).sort((a, b) => b[1] - a[1])?.[0]?.[0];
+    // Хэн ч нэг ч дадал биелүүлээгүй бол "шилдэг" гэж эхний хүнийг харуулахгүй.
+    const best = Object.entries(perMember).sort((a, b) => b[1] - a[1])[0];
+    const bestUid = best && best[1] > 0 ? best[0] : null;
     return {
       completed,
       possible,
@@ -506,6 +512,8 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     if (!cleanCode) return setFamilySetupError('Invite code оруулна уу.');
     setFamilySetupError(null);
     setFamilySetupLoading(true);
+    let stagedFamilyId = null;
+    let stagedGroupType = null;
     try {
       await runTransaction(db, async (transaction) => {
         const inviteRef = doc(db, 'inviteCodes', cleanCode);
@@ -514,16 +522,15 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
         const targetFamilyId = inviteSnap.data()?.familyId;
         if (!targetFamilyId) throw new Error('invite-code-broken');
 
-        const familyRef = doc(db, 'families', targetFamilyId);
-        const familySnap = await transaction.get(familyRef);
-        if (!familySnap.exists()) throw new Error('family-not-found');
-        // Дадлын багц бол ЗОРИЛГО гэр бүлийнх — нэгдэж буй хүн биш. Тухайн
-        // гэр бүл ямар groupType-тэйг familySnap-аас уншина.
-        // Урилгын баримт нь эхний эх сурвалж (унших эрх баталгаатай), гэр
-        // бүлийн баримт нь нөөц зам (хуучин урилгад groupType байхгүй).
-        const targetGroupType = normalizeGroupType(
-          inviteSnap.data()?.groupType || familySnap.data()?.groupType
-        );
+        // ЗАСВАР (permission-denied): нэгдэхээс ӨМНӨ families/{id} болон
+        // tasks/{uid}-г transaction.get хийдэг байсан. Дүрэм дээр эдгээрийг
+        // унших нь isFamilyMember() шаарддаг тул шинэ гишүүнд ҮРГЭЛЖ
+        // permission-denied өгч, хэн ч урилгаар нэгдэж чаддаггүй байв.
+        // Одоо зөвхөн урилгын баримтыг уншина (get нь signedIn-д нээлттэй);
+        // гэр бүл/дадлын баримтыг гишүүн болсны ДАРАА шалгана.
+        stagedFamilyId = targetFamilyId;
+        const targetGroupType = normalizeGroupType(inviteSnap.data()?.groupType);
+        stagedGroupType = targetGroupType;
 
         // Бүлгийн хязгаараас хэтэрсэн эсэх. Гишүүдийн жагсаалтыг нэгдэхээс
         // ӨМНӨ унших эрхгүй тул тоог урилгын баримт дээрх memberCount-оос
@@ -533,8 +540,6 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
         if (inviteMax > 0 && inviteCount >= inviteMax) throw new Error('family-full');
 
         const memberRef = doc(db, 'families', targetFamilyId, 'members', user.uid);
-        const taskRef = doc(db, 'families', targetFamilyId, 'tasks', user.uid);
-        const taskSnap = await transaction.get(taskRef);
         const userRef = doc(db, 'users', user.uid);
 
         // FIRESTORE ДҮРЭМ ЗААВАЛ 'member' ЛИТЕРАЛ шаарддаг (members/{uid}
@@ -559,9 +564,20 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
           joinedWithInviteCode: cleanCode,
           updatedAt: serverTimestamp(),
         }, { merge: true });
-        if (!taskSnap.exists()) transaction.set(taskRef, { uid: user.uid, tasks: getBaseTasks(targetGroupType, false), updatedAt: serverTimestamp() });
         transaction.set(userRef, { uid: user.uid, familyId: targetFamilyId, displayName: safeDisplayName, avatar, role: 'member', joinedWithInviteCode: cleanCode, updatedAt: serverTimestamp() }, { merge: true });
       });
+      // Одоо гишүүн болсон тул унших эрхтэй. Дадлын жагсаалт байхгүй бол
+      // (дахин нэгдэж буй хүний хуучин дадлыг ДАРАХГҮЙ) анхны багцыг бичнэ.
+      try {
+        const taskRef = doc(db, 'families', stagedFamilyId, 'tasks', user.uid);
+        const taskSnap = await getDoc(taskRef);
+        if (!taskSnap.exists()) {
+          await setDoc(taskRef, { uid: user.uid, tasks: getBaseTasks(stagedGroupType, false), updatedAt: serverTimestamp() });
+        }
+      } catch (taskErr) {
+        // Эгзэгтэй биш: гишүүнчлэл аль хэдийн бичигдсэн, дадлаа дараа нэмж болно.
+        console.warn('Join: default tasks error:', taskErr?.code, taskErr?.message);
+      }
     } catch (e) {
       console.error('Join family error:', e.code, e.message);
       const reason = e.message === 'invite-code-not-found'
@@ -580,6 +596,7 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     // logout эсвэл өөр account руу шилжих үед өмнөх гишүүний meals/rewards/
     // логууд дэлгэцэн дээр цацрагддаг (cross-account bleed) байсан.
     saveGenerationRef.current += 1;
+    pendingSaveRef.current = null;
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
@@ -599,19 +616,19 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     membersRef.current = {};
   };
 
-  useEffect(() => () => {
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-  }, []);
+  // Unmount үед хүлээгдэж буй хадгалалтыг ХАЯХГҮЙ — шууд бичнэ.
+  const flushOnUnmountRef = useRef(null);
+  useEffect(() => () => { flushOnUnmountRef.current?.(); }, []);
 
-  const persistDailyLog = async (uid, dateKey, nextLog) => {
+  // part: 'all' | 'tasks' | 'mood'. Task хадгалалт mood-ыг, mood хадгалалт
+  // tasks-ийг БИЧИХГҮЙ — өмнө нь дадал тэмдэглээд 350ms дотор сэтгэл зүй
+  // сонговол хойно ирсэн task бичилт mood-ыг хуучин утгаар нь дарж устгадаг байв.
+  const persistDailyLog = async (uid, dateKey, nextLog, part = 'all') => {
     if (!isFirebaseConfigured || !db || !familyId || !uid) return;
-    await setDoc(doc(db, 'families', familyId, 'dailyLogs', `${dateKey}_${uid}`), {
-      uid,
-      dateKey,
-      tasks: nextLog.tasks || {},
-      mood: nextLog.mood || null,
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
+    const payload = { uid, dateKey, updatedAt: serverTimestamp() };
+    if (part !== 'mood') payload.tasks = nextLog.tasks || {};
+    if (part !== 'tasks') payload.mood = nextLog.mood || null;
+    await setDoc(doc(db, 'families', familyId, 'dailyLogs', `${dateKey}_${uid}`), payload, { merge: true });
   };
 
   // Оноо/streak шинэчлэлт одоо Firestore transaction дотор явагдна: серверийн
@@ -702,52 +719,70 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     membersRef.current = nextMembers;
     setMembers(nextMembers);
 
+    // ЗАСВАР: өмнө нь шинэ дарлт бүр өмнөх timeout-ийг ЦУЦАЛДАГ байсан тул
+    //  (1) 350ms дотор 2 дадал тэмдэглэвэл эхнийх нь оноо серверт ОРДОГГҮЙ,
+    //  (2) тэмдэглээд шууд буцаавал серверт зөвхөн -оноо очиж оноо БУУРДАГ,
+    //  (3) гишүүн/өдөр солимогц өмнөх лог бүхэлдээ АЛГА болдог байв.
+    // Одоо ижил (гишүүн+өдөр) бичилтийн оноог хуримтлуулна, түлхүүр
+    // өөрчлөгдвөл өмнөх бичилтийг ШУУД хадгална.
+    const saveKey = `${selectedMemberId}|${selectedDate}`;
+    if (pendingSaveRef.current && pendingSaveRef.current.key !== saveKey) flushPendingSave();
+    const samePending = pendingSaveRef.current;
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    const capturedGeneration = saveGenerationRef.current;
-    const capturedMemberId = selectedMemberId;
-    const capturedDateKey = selectedDate;
-    saveTimeoutRef.current = setTimeout(async () => {
-      // Generation check: resetMonthlyProgress аль хэдийн шинэ үе эхлүүлсэн бол хуучин төлөвөө бичихгүй
-      if (capturedGeneration !== saveGenerationRef.current) {
-        saveTimeoutRef.current = null;
-        return;
-      }
-      try {
-        await persistDailyLog(capturedMemberId, capturedDateKey, nextUserLog);
-        if (capturedGeneration !== saveGenerationRef.current) {
-          saveTimeoutRef.current = null;
-          return;
-        }
-        await commitMemberStats(capturedMemberId, pointsChange, recalculatedStreak);
-        if (capturedGeneration !== saveGenerationRef.current) {
-          saveTimeoutRef.current = null;
-          return;
-        }
-        saveTimeoutRef.current = null;
-        // Тэмдэглэсэн амжилтын feedback зөвхөн persistence АМЖИЛТТАЙ
-        // болсны ДАРАА гардаг — сүлжээ уналаа гэхэд confetti/haptic хийж,
-        // дараа нь completion алга болдог байсан.
-        if (pointsChange !== 0 && celebrateOnPoints) {
-          if (pointsChange > 0) {
-            successFeedback();
-            onTaskCompleted?.(pointsChange);
-          } else {
-            selectionFeedback();
-            onTaskUncompleted?.();
-          }
-        }
-      } catch (e) {
-        if (capturedGeneration !== saveGenerationRef.current) {
-          saveTimeoutRef.current = null;
-          return;
-        }
-        console.error('Task save error:', e.code, e.message);
-        saveTimeoutRef.current = null;
-        revertFailedTaskSave(capturedDateKey, capturedMemberId, existingUserLog, nextUserLog, prevStats, { points: nextPoints, streak: recalculatedStreak });
-        onSaveError?.('Дадлын мэдээллийг хадгалж чадсангүй. Интернэт холболтоо шалгаад дахин оролдоно уу.');
-      }
-    }, 350);
+    pendingSaveRef.current = {
+      key: saveKey,
+      generation: saveGenerationRef.current,
+      memberId: selectedMemberId,
+      dateKey: selectedDate,
+      userLog: nextUserLog,
+      pointsDelta: (samePending?.pointsDelta || 0) + pointsChange,
+      streak: recalculatedStreak,
+      prevUserLog: samePending ? samePending.prevUserLog : existingUserLog,
+      prevStats: samePending ? samePending.prevStats : prevStats,
+      writtenStats: { points: nextPoints, streak: recalculatedStreak },
+      lastPointsChange: pointsChange,
+      celebrate: celebrateOnPoints,
+    };
+    saveTimeoutRef.current = setTimeout(flushPendingSave, 350);
   };
+
+  const runPendingSave = async (pending) => {
+    const { generation, memberId, dateKey, userLog, pointsDelta, streak, prevUserLog, prevStats, writtenStats, lastPointsChange, celebrate } = pending;
+    // Generation check: reset/logout аль хэдийн шинэ үе эхлүүлсэн бол хуучин төлөвөө бичихгүй
+    if (generation !== saveGenerationRef.current) return;
+    try {
+      await persistDailyLog(memberId, dateKey, userLog, 'tasks');
+      if (generation !== saveGenerationRef.current) return;
+      await commitMemberStats(memberId, pointsDelta, streak);
+      if (generation !== saveGenerationRef.current) return;
+      // Feedback зөвхөн persistence АМЖИЛТТАЙ болсны ДАРАА.
+      if (lastPointsChange !== 0 && celebrate) {
+        if (lastPointsChange > 0) {
+          successFeedback();
+          onTaskCompleted?.(lastPointsChange);
+        } else {
+          selectionFeedback();
+          onTaskUncompleted?.();
+        }
+      }
+    } catch (e) {
+      if (generation !== saveGenerationRef.current) return;
+      console.error('Task save error:', e.code, e.message);
+      revertFailedTaskSave(dateKey, memberId, prevUserLog, userLog, prevStats, writtenStats);
+      onSaveError?.('Дадлын мэдээллийг хадгалж чадсангүй. Интернэт холболтоо шалгаад дахин оролдоно уу.');
+    }
+  };
+
+  function flushPendingSave() {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    const pending = pendingSaveRef.current;
+    pendingSaveRef.current = null;
+    if (pending) runPendingSave(pending);
+  }
+  flushOnUnmountRef.current = flushPendingSave;
 
   const toggleTask = (id, forceState = null) => {
     if (!selectedMemberId || isFutureSelection()) {
@@ -823,12 +858,28 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
       onSaveError?.('Сэтгэл зүйг зөвхөн өөрөө, эсвэл эцэг эх/админ тэмдэглэж чадна.');
       return;
     }
-    const dayLogs = dailyLogs?.[selectedDate] || {};
-    const nextUserLog = { ...(dayLogs?.[selectedMemberId] || { tasks: {}, mood: null }), mood };
-    setDailyLogs((prev) => ({ ...(prev || {}), [selectedDate]: { ...(prev?.[selectedDate] || {}), [selectedMemberId]: nextUserLog } }));
-    try { await persistDailyLog(selectedMemberId, selectedDate, nextUserLog); }
+    // Sync ref-ээс уншиж, ref-ээ шинэчилнэ — эс тэгвэл дараагийн task
+    // бичилт хуучин mood-той лог дээр суурилна.
+    const memberId = selectedMemberId;
+    const dateKey = selectedDate;
+    const currentLogs = dailyLogsRef.current || {};
+    const dayLogs = currentLogs[dateKey] || {};
+    const prevMood = dayLogs[memberId]?.mood || null;
+    const nextUserLog = { ...(dayLogs[memberId] || { tasks: {}, mood: null }), mood };
+    const nextLogs = { ...currentLogs, [dateKey]: { ...dayLogs, [memberId]: nextUserLog } };
+    dailyLogsRef.current = nextLogs;
+    setDailyLogs(nextLogs);
+    try { await persistDailyLog(memberId, dateKey, nextUserLog, 'mood'); }
     catch (e) {
       console.error('Mood save error:', e.code, e.message);
+      // Optimistic утгыг буцаана (хооронд өөр утга сонгогдоогүй бол).
+      const latest = dailyLogsRef.current || {};
+      const latestUserLog = latest?.[dateKey]?.[memberId];
+      if (latestUserLog && latestUserLog.mood === mood) {
+        const restored = { ...latest, [dateKey]: { ...(latest[dateKey] || {}), [memberId]: { ...latestUserLog, mood: prevMood } } };
+        dailyLogsRef.current = restored;
+        setDailyLogs(restored);
+      }
       onSaveError?.('Сэтгэл зүйг хадгалж чадсангүй. Дахин оролдоно уу.');
     }
   };
@@ -905,18 +956,34 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     if (!isFirebaseConfigured || !db || !familyId) return { ok: true, archives: [] };
     try {
       const snap = await getDocs(query(collection(db, 'families', familyId, 'archives'), orderBy('monthKey', 'desc')));
-      return { ok: true, archives: snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })) };
+      const archives = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+      // Нэг сард хэд хэдэн архив байж болно (id нь мөчлөгөөр давтагдашгүй) —
+      // хамгийн сүүлд дууссан мөчлөгийг эхэнд.
+      archives.sort((a, b) => String(b.periodEnd || b.monthKey || '').localeCompare(String(a.periodEnd || a.monthKey || '')));
+      return { ok: true, archives };
     } catch (e) {
       console.error('List archives error:', e.code, e.message);
       return { ok: false, message: 'Архивыг ачаалж чадсангүй. Дахин оролдоно уу.', archives: [] };
     }
   }, [familyId]);
 
+  // Гэрээ: { ok:true } эсвэл { ok:false, message }. Өмнө нь setDoc унахад
+  // барьдаггүй байсан тул unhandled rejection болж, UI "хадгалсан" мэт
+  // харагдан засварын горим/модал гацдаг байв.
   const saveTasksForMember = async (uid, tasks) => {
-    if (!isFirebaseConfigured || !db || !familyId || !uid) return;
-    const normalized = tasks.map(normalizeTask);
+    if (!uid) return { ok: false, message: 'Гишүүн сонгоогүй байна.' };
+    const normalized = (Array.isArray(tasks) ? tasks : []).map(normalizeTask);
+    const prevTasks = tasksByMember[uid] || [];
     setTasksByMember((prev) => ({ ...prev, [uid]: normalized }));
-    await setDoc(doc(db, 'families', familyId, 'tasks', uid), { uid, tasks: normalized, updatedAt: serverTimestamp() }, { merge: true });
+    if (!isFirebaseConfigured || !db || !familyId) return { ok: true, local: true };
+    try {
+      await setDoc(doc(db, 'families', familyId, 'tasks', uid), { uid, tasks: normalized, updatedAt: serverTimestamp() }, { merge: true });
+      return { ok: true };
+    } catch (e) {
+      console.error('Save tasks error:', e.code, e.message);
+      setTasksByMember((prev) => ({ ...prev, [uid]: prevTasks }));
+      return { ok: false, message: 'Дадлын жагсаалтыг хадгалж чадсангүй. Интернэт холболтоо шалгаад дахин оролдоно уу.' };
+    }
   };
 
   // Гэрээ: { ok:true } эсвэл { ok:false, message }. Batch commit амжилтгүй
@@ -1088,12 +1155,23 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     // Pending debounced бичилтүүдийг хүчингүй болгоно — clearTimeout дангаараа хангалтгүй,
     // аль хэдийн эхэлсэн async promise нь reset-ийн дараа хуучин төлөвөө бичих эрсдэлтэй.
     saveGenerationRef.current += 1;
+    pendingSaveRef.current = null;
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
-    const monthStartKey = `${todayKey.split('-')[0]}-${todayKey.split('-')[1]}-01`;
-    const inPeriod = (dateKey) => dateKey >= monthStartKey && dateKey <= todayKey;
+    // ЗАСВАР: өмнө нь хугацааг КАЛЕНДАРИЙН сарын 1-нээс тооцдог байсан тул
+    // 30 хоногийн мөчлөг (жишээ нь 9/7 → 10/7) дуусахад 10/1-10/7-г л
+    // архивлаж, 9 сарын хувийг тооцдоггүй байв. Мөн архивын id нь "YYYY-MM"
+    // байсан тул нэг сард 2 удаа reset хийвэл эхний архив ДАРАГДАЖ устдаг байв.
+    // Одоо мөчлөгийн эхлэлээс (cycleStartKey) тооцож, id-г давтагдашгүй болгоно.
+    // Ачаалсан лог зөвхөн DAILY_LOG_LOOKBACK_DAYS хоногийнх тул түүнээс
+    // өмнөх огноог тооцвол хувь худал бага гарна — хязгаарлана.
+    const lookbackKey = formatDateKey(new Date(Date.now() - (DAILY_LOG_LOOKBACK_DAYS - 1) * 24 * 60 * 60 * 1000));
+    const cycleStartKey = getCycleStartKey(familyProfile, todayKey) || todayKey;
+    let periodStartKey = cycleStartKey > todayKey ? todayKey : cycleStartKey;
+    if (periodStartKey < lookbackKey) periodStartKey = lookbackKey;
+    const inPeriod = (dateKey) => dateKey >= periodStartKey && dateKey <= todayKey;
 
     // ── АЮУЛГҮЙ БАЙДЛЫН ЗАСВАР (2026-09-12): ХАМГИЙН ЭХЭНД snapshot бичнэ ──
     // Өмнө нь энэ функц тухайн сарын БҮХ dailyLog-ийг шууд {tasks:{}}
@@ -1102,7 +1180,7 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     // устгахаас ӨМНӨ families/{id}/archives/{YYYY-MM} баримтад дүнг
     // хадгална. Энэ бичилт АМЖИЛТГҮЙ бол доорх устгах алхам огт хийгдэхгүй
     // — "архивгүйгээр устгах" боломжгүй болгосон.
-    const dayCount = Math.max(daysBetweenInclusive(monthStartKey, todayKey), 1);
+    const dayCount = Math.max(daysBetweenInclusive(periodStartKey, todayKey), 1);
     const completionByUid = {};
     memberList.forEach((member) => {
       const required = (tasksByMember[member.uid] || []).filter((task) => task.required !== false);
@@ -1115,10 +1193,10 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
       const possible = required.length * dayCount;
       completionByUid[member.uid] = possible > 0 ? Math.round((completed / possible) * 100) : 0;
     });
-    const archiveId = monthStartKey.slice(0, 7); // "YYYY-MM"
+    const archiveId = `${periodStartKey}_${todayKey}`; // давтагдашгүй
     const archiveData = {
-      monthKey: archiveId,
-      periodStart: monthStartKey,
+      monthKey: periodStartKey.slice(0, 7), // "YYYY-MM" — ArchiveModal-ын шошго/эрэмбэ
+      periodStart: periodStartKey,
       periodEnd: todayKey,
       dayCount,
       totalPoints: memberList.reduce((sum, member) => sum + (member.points || 0), 0),
@@ -1162,7 +1240,7 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     // Streak epoch: энэ өдрөөс өмнөх түүх рүү streak тооцохгүй (сарын эхлэл).
     // Өмнөх сарын complete логууд хэвээр үлдэнэ ч streak дахин сэрэхгүй.
     memberList.forEach((member) => {
-      ops.push({ ref: doc(db, 'families', familyId, 'members', member.uid), data: { points: 0, streak: 0, streakResetKey: monthStartKey, updatedAt: serverTimestamp() } });
+      ops.push({ ref: doc(db, 'families', familyId, 'members', member.uid), data: { points: 0, streak: 0, streakResetKey: todayKey, updatedAt: serverTimestamp() } });
     });
     familyRewards.forEach((reward) => {
       if (reward.status === 'redeemed' || reward.redeemedAt) {
@@ -1192,7 +1270,7 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     }
 
     const resetMembers = {};
-    memberList.forEach((member) => { resetMembers[member.uid] = { ...member, points: 0, streak: 0, streakResetKey: monthStartKey }; });
+    memberList.forEach((member) => { resetMembers[member.uid] = { ...member, points: 0, streak: 0, streakResetKey: todayKey }; });
     membersRef.current = resetMembers;
     setMembers(resetMembers);
 

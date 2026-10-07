@@ -132,7 +132,7 @@ export default function ArchiveModal({ visible, onClose, onFetch }) {
                 >
                   <View>
                     <Text className="text-sm font-black text-gray-900">{formatMonthKey(item.monthKey)}</Text>
-                    <Text className="text-[11px] font-semibold text-gray-400 mt-0.5">{(item.members || []).length} гишүүн · {item.dayCount} хоног</Text>
+                    <Text className="text-[11px] font-semibold text-gray-400 mt-0.5">{item.periodStart && item.periodEnd ? `${item.periodStart} – ${item.periodEnd} · ` : ''}{(item.members || []).length} гишүүн · {item.dayCount} хоног</Text>
                   </View>
                   <Text className="text-base font-black text-orange-600">{item.totalPoints || 0} оноо</Text>
                 </TouchableOpacity>
