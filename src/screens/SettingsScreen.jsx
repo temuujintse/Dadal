@@ -242,7 +242,7 @@ export default function SettingsScreen({
           <Shield size={22} color="#1e293b" />
           <Text className="text-lg font-black" style={{ color: '#1e293b' }}>Миний бүртгэл</Text>
         </View>
-        <Text className="text-sm font-bold text-gray-500">Нэр: {selectedUser}</Text>
+        <Text className="text-sm font-bold text-gray-500">Нэр: {currentMember?.name || 'Гишүүн'}</Text>
         <Text className="text-sm font-bold text-gray-500 mt-1">Үүрэг: {memberRoleLabel(currentMember?.role)}</Text>
       </View>
 

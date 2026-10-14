@@ -4,6 +4,12 @@
 `MULTI_TENANT_FIX.md`, `FLOW_LOGIC_FIX.md`, `FLOW_FEATURES.md`, `UI_CHANGES.md`,
 `UX_UPGRADE_NOTES.md`, `VALIDATION.md` файлуудыг нэгтгэсэн түүх юм.
 
+## [Unreleased] — 2026-10-14 Тохиргооны бүртгэлийн карт
+
+- `SettingsScreen.jsx`: "Миний бүртгэл" картын `Нэр:` нь сонгосон гишүүний
+  оронд НЭВТЭРСЭН хэрэглэгчийн нэрийг (`currentMember.name`) харуулдаг болов —
+  `Үүрэг:`-тэй нийцтэй.
+
 ## [Unreleased] — 2026-08-25 Firestore rules нэгтгэл
 
 - `FIRESTORE_RULES.fixed.txt` (засварласан дүрэм) болон `FIRESTORE_RULES.txt`
