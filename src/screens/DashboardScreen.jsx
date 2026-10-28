@@ -5,6 +5,7 @@ import ProgressRing from '../components/ProgressRing';
 import { getGroupTypeMeta } from '../constants/groupTypes';
 import { PHOTO_UPLOAD_ENABLED } from '../constants/features';
 import { getJourneyState } from '../utils/journey';
+import { calcSleepHours, formatHours, formatTimeInput } from '../utils/sleep';
 import SuggestionSheet from '../components/SuggestionSheet';
 import ArchiveModal from '../components/ArchiveModal';
 import FoodLogSection from '../components/FoodLogSection';
@@ -81,6 +82,7 @@ const TaskCard = memo(function TaskCard({
   // Бүх дадал одоо эхэлсэн/дууссан цагаа бүртгэдэг (trackTime) тул
   // дэлгэрэнгүй хэсэг нь үргэлж агуулгатай — өмнө нь зарим карт дарагдахгүй
   // "үхсэн" байдалтай байсныг үүгээр арилгана.
+  const isSleep = task.detailType === 'hours';
   const hasDetail = Boolean(
     task.trackTime !== false
     || task.tip
@@ -98,9 +100,9 @@ const TaskCard = memo(function TaskCard({
   };
 
   return (
-    <View className={`rounded-3xl border overflow-hidden ${done ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200'}`}>
+    <View className={`rounded-3xl border overflow-hidden ${done ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
       {/* Шудрах мөр — ногоон "Дуусгах" дэвсгэр зөвхөн энэ мөрийн ард байна */}
-      <View className="overflow-hidden bg-blue-500">
+      <View className="overflow-hidden bg-green-600">
         <View className="absolute inset-0 px-5 flex-row items-center">
           <Check size={22} color="#fff" />
           <Text className="text-white font-black ml-2">Дуусгах</Text>
@@ -108,13 +110,13 @@ const TaskCard = memo(function TaskCard({
         <Animated.View
           {...panResponder.panHandlers}
           style={{ transform: [{ translateX }] }}
-          className={`p-4 flex-row items-center ${done ? 'bg-blue-50' : 'bg-white'}`}
+          className={`p-4 flex-row items-center ${done ? 'bg-green-50' : 'bg-white'}`}
         >
           <TouchableOpacity
             onPress={() => onToggleDone?.(task.id)}
             accessibilityRole="button"
             accessibilityLabel={done ? `${task.text} — буцаах` : `${task.text} — дуусгах`}
-            className={`w-12 h-12 rounded-2xl items-center justify-center ${done ? 'bg-blue-500' : 'bg-orange-50'}`}
+            className={`w-12 h-12 rounded-2xl items-center justify-center ${done ? 'bg-green-600' : 'bg-orange-50'}`}
           >
             <Check size={24} color={done ? '#fff' : '#fdba74'} strokeWidth={3} />
           </TouchableOpacity>
@@ -128,9 +130,9 @@ const TaskCard = memo(function TaskCard({
           >
             <View className="flex-row items-center gap-2">
               {index ? (
-                <Text className={`text-[11px] font-black ${done ? 'text-blue-400' : 'text-gray-400'}`}>{index}.</Text>
+                <Text className={`text-[11px] font-black ${done ? 'text-green-500' : 'text-gray-400'}`}>{index}.</Text>
               ) : null}
-              <Text numberOfLines={1} className={`flex-1 text-[15px] font-black ${done ? 'text-gray-400 line-through' : 'text-gray-950'}`}>{task.text}</Text>
+              <Text numberOfLines={2} className={`flex-1 text-[15px] leading-5 font-black ${done ? 'text-gray-400 line-through' : 'text-gray-950'}`}>{task.text}</Text>
               <Text className="text-[10px] font-black text-orange-600 bg-orange-50 px-2 py-1 rounded-full">+{task.points}</Text>
             </View>
             <Text numberOfLines={1} className="text-xs font-semibold text-gray-400 mt-1">
@@ -155,6 +157,7 @@ const TaskCard = memo(function TaskCard({
       {/* Дэлгэрэнгүй — өмнө нь 'today' дэлгэц дээр байсан бүх зүйл энд орлоо */}
       {expanded && hasDetail ? (
         <View className="px-4 pb-4 pt-3 gap-3 border-t border-gray-100">
+          {!isSleep ? (<>
           <View className="flex-row flex-wrap items-center gap-2">
             {task.required !== false
               ? <Text className="text-[10px] font-black text-red-600 bg-red-50 px-2 py-1 rounded-full">Заавал</Text>
@@ -175,7 +178,9 @@ const TaskCard = memo(function TaskCard({
           {/* Эхэлсэн / дууссан цаг. Эхнийх нь check хийх мөчид автоматаар
               бичигдсэн байна (useFamilyData.toggleTask), хоёр дахийг нь
               хэрэглэгч өөрөө оруулна — "Одоо" товч эсвэл гараар. */}
-          {task.trackTime !== false ? (
+          </>) : null}
+
+          {task.trackTime !== false && !isSleep ? (
             <View className="flex-row gap-2">
               <View className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2.5">
                 <Text className="text-[10px] font-black uppercase text-gray-400">Эхэлсэн</Text>
@@ -207,39 +212,33 @@ const TaskCard = memo(function TaskCard({
             </View>
           ) : null}
 
-          {/* detailType: hours — нойрны цаг (1-12) */}
-          {task.detailType === 'hours' ? (
+          {/* detailType: hours — орой унтсан, өглөө сэрсэн цагаас нойрыг тооцно */}
+          {isSleep ? (
             <View>
-              <Text className="text-[11px] font-black text-gray-500 mb-2">Та өнөөдөр хэдэн цаг унтсан бэ?</Text>
-              <View className="flex-row flex-wrap gap-2">
-                {Array.from({ length: 12 }, (_, i) => i + 1).map((hour) => {
-                  const selected = task.hoursValue === hour;
-                  return (
-                    <TouchableOpacity
-                      key={hour}
-                      onPress={() => onUpdateLog?.(task.id, { hoursValue: selected ? null : hour })}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${hour} цаг`}
-                      accessibilityState={{ selected }}
-                      className={`w-11 h-11 rounded-2xl items-center justify-center ${selected ? 'bg-blue-500' : 'bg-slate-100'}`}
-                      style={{ minHeight: 44, minWidth: 44 }}
-                    >
-                      <Text className={`text-sm font-black ${selected ? 'text-white' : 'text-gray-500'}`}>{hour}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
+              <View className="flex-row gap-2">
+                {[['bedTime', '🌙 Унтсан', '23:00'], ['wakeTime', '☀️ Сэрсэн', '07:00']].map(([key, label, placeholder]) => (
+                  <View key={key} className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2">
+                    <Text className="text-[11px] font-black text-gray-500">{label}</Text>
+                    <TextInput
+                      value={task[key] || ''}
+                      onChangeText={(value) => {
+                        const next = { ...task, [key]: formatTimeInput(value) };
+                        onUpdateLog?.(task.id, { [key]: next[key], hoursValue: calcSleepHours(next.bedTime, next.wakeTime) });
+                      }}
+                      placeholder={placeholder}
+                      placeholderTextColor="#94a3b8"
+                      keyboardType="number-pad"
+                      maxLength={5}
+                      accessibilityLabel={label}
+                      className="text-xl font-black text-gray-900 py-1"
+                    />
+                  </View>
+                ))}
               </View>
-              {/* Сонгосон цагт ЗӨӨЛӨН эргэх холбоо. Улаан/анхааруулга биш —
-                  дадал төлөвшүүлэхэд загнах нь эсрэг үр дүнтэй тул зөвхөн
-                  баталгаажуулах эсвэл саналаа давтах хоёрын нэг. */}
-              {task.hoursValue && Array.isArray(task.goodRange) ? (
-                <View className={`mt-2.5 rounded-2xl px-3 py-2 ${task.hoursValue >= task.goodRange[0] && task.hoursValue <= task.goodRange[1] ? 'bg-blue-50 border border-blue-100' : 'bg-orange-50 border border-orange-100'}`}>
-                  <Text className={`text-[11px] font-bold leading-4 ${task.hoursValue >= task.goodRange[0] && task.hoursValue <= task.goodRange[1] ? 'text-blue-700' : 'text-orange-700'}`}>
-                    {task.hoursValue >= task.goodRange[0] && task.hoursValue <= task.goodRange[1]
-                      ? `Тохирсон байна 👍 ${task.goodRange[0]}-${task.goodRange[1]} цагийн нойр яг хэрэгтэй хэмжээ.`
-                      : task.hoursValue < task.goodRange[0]
-                        ? `${task.hoursValue} цаг бага байна. ${task.goodRange[0]}-${task.goodRange[1]} цаг унтвал өдөржин хүчтэй байна.`
-                        : `${task.hoursValue} цаг нилээд урт. ${task.goodRange[0]}-${task.goodRange[1]} цаг байхад бие илүү сэргэлэн байдаг.`}
+              {task.bedTime && task.wakeTime && task.hoursValue && Array.isArray(task.goodRange) ? (
+                <View className={`mt-2.5 rounded-2xl px-3 py-2.5 ${task.hoursValue >= task.goodRange[0] ? 'bg-green-50 border border-green-100' : 'bg-orange-50 border border-orange-100'}`}>
+                  <Text className={`text-sm font-black ${task.hoursValue >= task.goodRange[0] ? 'text-green-700' : 'text-orange-700'}`}>
+                    {formatHours(task.hoursValue)} унтлаа{task.hoursValue >= task.goodRange[0] ? ' 👍' : ` · ${formatHours(task.goodRange[0] - task.hoursValue)} дутуу`}
                   </Text>
                 </View>
               ) : null}
@@ -517,8 +516,8 @@ const DashboardScreen = memo(function DashboardScreen({
                 {/* Зураг оруулсан бол зураг, эс бөгөөс хуучнаараа emoji.
                     Зураг ачаалагдахгүй байсан ч emoji руу автоматаар
                     буцахгүй тул дэвсгэр өнгө нь хоосон нүд харагдуулахгүй. */}
-                {member.photoURL ? (
-                  <Image source={{ uri: member.photoURL }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                {member.photoURL || member.photoData ? (
+                  <Image source={{ uri: member.photoURL || member.photoData }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                 ) : (
                   <Text className="text-3xl">{member.avatar || member.name?.substring(0, 1) || '🙂'}</Text>
                 )}
@@ -528,7 +527,7 @@ const DashboardScreen = memo(function DashboardScreen({
               {/* Зургаа солих — зөвхөн ӨӨРИЙН профайл дээр. Firestore дүрэм
                   ч гишүүнийг зөвхөн өөрийн документоо засахыг зөвшөөрдөг
                   тул UI болон дүрэм ижил invariant баримтална. */}
-              {member.uid === currentUserId && PHOTO_UPLOAD_ENABLED ? (
+              {member.uid === currentUserId || (canEditCover && member.managedByUid) ? (
                 <TouchableOpacity
                   onPress={() => onChangeMemberPhoto?.(member.uid)}
                   disabled={photoUploading}
@@ -547,20 +546,20 @@ const DashboardScreen = memo(function DashboardScreen({
       </ScrollView>
       ) : null}
 
-      <View className="rounded-[30px] bg-sky-950 p-5 overflow-hidden">
-        <View className="absolute w-40 h-40 rounded-full bg-orange-500/20 -right-12 -top-16" />
+      <View className="rounded-[30px] bg-green-600 p-5 overflow-hidden">
+        <View className="absolute w-40 h-40 rounded-full bg-white/15 -right-12 -top-16" />
         <View className="flex-row items-center justify-between">
           <View className="flex-1 pr-3">
-            <Text className="text-orange-200 text-xs font-black uppercase">{viewingPastDay ? 'Сонгосон өдрийн ахиц' : 'Өнөөдрийн ахиц'}</Text>
+            <Text className="text-green-100 text-xs font-black uppercase">{viewingPastDay ? 'Сонгосон өдрийн ахиц' : 'Өнөөдрийн ахиц'}</Text>
             <View className="mt-2">
               <Text className="text-white font-black text-lg">{completedCount}/{totalTasks}</Text>
-              <Text className="text-gray-400 text-[10px] font-bold mt-0.5">дадал дуусгасан</Text>
+              <Text className="text-green-100 text-[10px] font-bold mt-0.5">дадал дуусгасан</Text>
             </View>
           </View>
           {/* Шулуун полос + том тоо хосолсныг НЭГ дугуй ринг болгов — 100%
               харагдацыг нэг харцаар мэдрэх боломжтой (react-native-svg
               аль хэдийн суусан тул шинэ сан хэрэггүй). */}
-          <ProgressRing progress={progress} size={92} strokeWidth={9}>
+          <ProgressRing progress={progress} size={92} strokeWidth={9} fillColor="#ffffff" trackColor="rgba(255,255,255,0.25)">
             <Text className="text-white text-[26px] font-black">{progress}%</Text>
           </ProgressRing>
         </View>
@@ -568,15 +567,15 @@ const DashboardScreen = memo(function DashboardScreen({
         <View className="flex-row gap-2 mt-4">
           <View className="flex-1 bg-white/10 border border-white/20 rounded-2xl p-3">
             <View className="flex-row items-center gap-1.5"><Flame size={15} color="#fed7aa" fill="#fed7aa" /><Text className="text-white font-black">{streak}</Text></View>
-            <Text className="text-gray-400 text-[10px] font-bold mt-0.5">өдөр дараалан</Text>
+            <Text className="text-green-100 text-[10px] font-bold mt-0.5">өдөр дараалан</Text>
           </View>
           <View className="flex-1 bg-white/10 border border-white/20 rounded-2xl p-3">
             <Text className="text-white font-black">{remainingCount}</Text>
-            <Text className="text-gray-400 text-[10px] font-bold mt-0.5">үлдсэн дадал</Text>
+            <Text className="text-green-100 text-[10px] font-bold mt-0.5">үлдсэн дадал</Text>
           </View>
           <View className="flex-1 bg-white/10 border border-white/20 rounded-2xl p-3">
             <Text className="text-white font-black">{requiredCount}</Text>
-            <Text className="text-gray-400 text-[10px] font-bold mt-0.5">заавал хийх</Text>
+            <Text className="text-green-100 text-[10px] font-bold mt-0.5">заавал хийх</Text>
           </View>
         </View>
       </View>
@@ -698,8 +697,12 @@ const DashboardScreen = memo(function DashboardScreen({
 
       {isEditingTasks ? (
         <View className="gap-3">
-          {(tempUserTasks || []).map((task, index) => (
-            <View key={task.id || index} className="p-4 rounded-3xl border border-orange-200 bg-orange-50 gap-2">
+          {(tempUserTasks || []).map((task, index) => {
+            // Админы сонгосон үндсэн дадлыг энгийн гишүүн засаж/устгаж чадахгүй.
+            const locked = Boolean(task.core) && !canEditCover;
+            return (
+            <View key={task.id || index} className="p-4 rounded-3xl border border-orange-200 bg-orange-50 gap-2" pointerEvents={locked ? 'none' : 'auto'} style={{ opacity: locked ? 0.7 : 1 }}>
+              {task.core ? <Text className="text-[10px] font-black text-green-700">🔒 Үндсэн дадал{locked ? ' · админ л засна' : ''}</Text> : null}
               <View className="flex-row gap-3 items-start">
                 <Text className="mt-3 font-black text-orange-400 text-xs w-4 text-center">{index + 1}</Text>
                 <View className="flex-1 gap-2">
@@ -731,7 +734,8 @@ const DashboardScreen = memo(function DashboardScreen({
                 </TouchableOpacity>
               </View>
             </View>
-          ))}
+            );
+          })}
           <TouchableOpacity onPress={onTempTaskAdd} className="w-full py-4 border-2 border-dashed border-gray-300 rounded-3xl items-center flex-row justify-center gap-2 bg-white">
             <Plus size={20} color="#64748b" /><Text className="font-black text-gray-500">Дадал нэмэх</Text>
           </TouchableOpacity>

@@ -101,3 +101,24 @@ export async function pickAndUploadFamilyCover({ familyId }) {
   if (!picked.ok) return picked;
   return uploadLocalUri(picked.uri, `families/${familyId}/cover.jpg`);
 }
+
+// Storage (Blaze багц)-гүйгээр профайл зураг: 160px, JPEG 60% болгож
+// base64 data URL буцаана (~8-12КБ). Гишүүний Firestore документод
+// `photoData` талбарт шууд хадгална — Firestore-ийн үнэгүй багцад багтана.
+export async function pickAvatarAsDataUrl() {
+  const permission = await ensureLibraryPermission();
+  if (!permission.ok) return permission;
+  const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 1 });
+  if (result.canceled) return fail('CANCELED', '');
+  const asset = result.assets?.[0];
+  if (!asset?.uri) return fail('NO_ASSET', 'Зураг уншиж чадсангүй. Өөр зураг сонгоно уу.');
+  try {
+    const resized = await manipulateAsync(asset.uri, [{ resize: { width: 160 } }], { compress: 0.6, format: SaveFormat.JPEG, base64: true });
+    const dataUrl = `data:image/jpeg;base64,${resized.base64}`;
+    if (dataUrl.length > 19000) return fail('TOO_LARGE', 'Зураг хэт том байна. Өөр зураг сонгоно уу.');
+    return { ok: true, dataUrl };
+  } catch (e) {
+    console.error('Avatar encode error:', e?.message);
+    return fail('RESIZE_FAILED', 'Зургийг боловсруулж чадсангүй. Өөр зураг сонгоод үзнэ үү.');
+  }
+}

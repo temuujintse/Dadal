@@ -75,7 +75,16 @@ export function AuthProvider({ children }) {
   };
 
   const handleGuestLogin = async () => {
-    if (!isFirebaseConfigured || !auth) return setAuthError('Firebase config эхлээд холбоно уу.');
+    if (!isFirebaseConfigured || !auth) {
+      // Dev-д Firebase config байхгүй үед ч дэлгэцүүдийг үзэж засварлах
+      // боломжтой локал demo хэрэглэгч (өгөгдөл зөвхөн санах ойд).
+      if (__DEV__) {
+        setFirebaseError(null);
+        setUser({ uid: 'local-demo-user', isAnonymous: true, isLocalDemo: true, email: null });
+        return undefined;
+      }
+      return setAuthError('Firebase config эхлээд холбоно уу.');
+    }
     setAuthError(null);
     try { await signInAnonymously(auth); }
     catch (e) { setAuthError(`${e.code || 'auth/error'}: Anonymous provider асаасан эсэхээ шалгана уу.`); }
@@ -110,6 +119,8 @@ export function AuthProvider({ children }) {
     if (isFirebaseConfigured && auth) {
       setAuthError(null);
       await signOut(auth);
+    } else {
+      setUser(null);
     }
   };
 

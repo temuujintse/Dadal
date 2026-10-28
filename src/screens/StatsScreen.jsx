@@ -3,6 +3,7 @@ import { Dimensions, Text, View } from 'react-native';
 import { LineChart, PieChart } from 'react-native-chart-kit';
 import { Crown, Flame, Medal, TrendingUp, Trophy } from 'lucide-react-native';
 import { getGroupTypeMeta } from '../constants/groupTypes';
+import { formatHours } from '../utils/sleep';
 
 const chartConfig = {
   backgroundGradientFrom: '#ffffff',
@@ -14,7 +15,7 @@ const chartConfig = {
   propsForBackgroundLines: { stroke: '#f1f5f9' },
 };
 
-export default function StatsScreen({ userStats, selectedUser, progress, weeklyReport, weeklyTrend = [], completedCount = 0, totalTasks = 0, groupType = 'family' }) {
+export default function StatsScreen({ userStats, selectedUser, progress, weeklyReport, weeklyTrend = [], completedCount = 0, totalTasks = 0, groupType = 'family', sleepSummary = null }) {
   // Бүлгийн төрлөөс хамаарсан угтвар — "Гэр бүлийн" / "Найзуудын" / "Миний".
   const groupMeta = getGroupTypeMeta(groupType);
   const isSolo = groupMeta.id === 'personal';
@@ -27,7 +28,7 @@ export default function StatsScreen({ userStats, selectedUser, progress, weeklyR
   const remaining = Math.max(totalTasks - completedCount, 0);
   const isEmptyStats = totalTasks === 0;
   const pieData = [
-    { name: 'Дууссан', population: completedCount, color: '#2563eb', legendFontColor: '#475569', legendFontSize: 12 },
+    { name: 'Дууссан', population: completedCount, color: '#16a34a', legendFontColor: '#475569', legendFontSize: 12 },
     { name: 'Үлдсэн', population: remaining, color: '#fed7aa', legendFontColor: '#475569', legendFontSize: 12 },
   ];
   if (completedCount === 0 && remaining === 0) pieData[1].population = 1;
@@ -50,6 +51,23 @@ export default function StatsScreen({ userStats, selectedUser, progress, weeklyR
 
       {!isEmptyStats ? (
         <View className="bg-white border border-gray-200 rounded-[28px] p-3 mb-5"><Text className="font-black text-gray-950 text-base px-2 pt-2">Өнөөдрийн бүтэц</Text><PieChart data={pieData} width={width - 26} height={190} chartConfig={chartConfig} accessor="population" backgroundColor="transparent" paddingLeft="8" absolute /></View>
+      ) : null}
+
+      {sleepSummary ? (
+        <View className="bg-white border border-green-100 rounded-[28px] p-5 mb-5">
+          <Text className="font-black text-gray-950 text-base">😴 30 хоногийн нойр</Text>
+          {sleepSummary.nights ? (
+            <>
+              <Text className="text-xs font-semibold text-gray-500 mt-1">{sleepSummary.nights} шөнө бүртгэсэн · зорилт {sleepSummary.goodRange[0]}-{sleepSummary.goodRange[1]} цаг</Text>
+              <View className="flex-row gap-2 mt-4">
+                <View className="flex-1 bg-slate-50 rounded-2xl p-3"><Text className="font-black text-gray-900">{formatHours(sleepSummary.average)}</Text><Text className="text-[10px] font-bold text-gray-400 mt-0.5">дундаж</Text></View>
+                <View className="flex-1 bg-green-50 rounded-2xl p-3"><Text className="font-black text-green-700">{sleepSummary.goodNights}</Text><Text className="text-[10px] font-bold text-gray-400 mt-0.5">сайн унтсан шөнө</Text></View>
+                <View className={`flex-1 rounded-2xl p-3 ${sleepSummary.debt > 0 ? 'bg-orange-50' : 'bg-green-50'}`}><Text className={`font-black ${sleepSummary.debt > 0 ? 'text-orange-700' : 'text-green-700'}`}>{sleepSummary.debt > 0 ? formatHours(sleepSummary.debt) : '0'}</Text><Text className="text-[10px] font-bold text-gray-400 mt-0.5">нойр алдагдал</Text></View>
+              </View>
+              <Text className="text-xs font-bold text-gray-500 mt-3">{sleepSummary.debt === 0 ? 'Маш сайн нойртой байна 🌿' : sleepSummary.debt <= 5 ? 'Бага зэрэг нойр дутсан — эрт унтахыг хичээгээрэй.' : `Нийт ${formatHours(sleepSummary.debt)} нойр алдсан байна. Орой эрт унтаарай.`}</Text>
+            </>
+          ) : <Text className="text-xs font-semibold text-gray-500 mt-1">Нүүр хуудсанд унтсан, сэрсэн цагаа оруулахад энд гарна.</Text>}
+        </View>
       ) : null}
 
       {weeklyReport ? <View className="bg-orange-50 border border-orange-100 rounded-3xl p-5 mb-5"><Text className="text-xs font-black text-orange-500 uppercase">{groupMeta.possessive} 7 хоногийн тайлан</Text><Text className="text-4xl font-black text-orange-600 mt-2">{weeklyReport.rate}%</Text><Text className="text-xs font-bold text-gray-600 mt-2">{weeklyReport.completed}/{weeklyReport.possible} заавал хийх дадал дууссан</Text><Text className="text-xs font-bold text-gray-400 mt-1">Хамгийн идэвхтэй: {weeklyReport.bestMemberName}</Text></View> : null}

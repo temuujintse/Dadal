@@ -41,6 +41,11 @@ service cloud.firestore {
     }
 
     // Урилгын код тухайн гэр бүлд ҮНЭХЭЭР хамаарах эсэхийг шалгана.
+    function photoDataOk() {
+      return !('photoData' in request.resource.data)
+        || (request.resource.data.photoData is string && request.resource.data.photoData.size() < 20000);
+    }
+
     function inviteGrants(familyId, code) {
       return code is string
         && exists(/databases/$(database)/documents/inviteCodes/$(code))
@@ -92,7 +97,7 @@ service cloud.firestore {
         // устгах, гэр бүлийн мэдээллийг өөрчлөх эрхтэй болно.
         //
         // Одоо зөвхөн гурван зам:
-        allow create: if signedIn() && (
+        allow create: if signedIn() && photoDataOk() && (
           // 1) Эцэг эх/админ шинэ гишүүн (жишээ нь хүүхдийн профайл) нэмнэ
           isAdmin(familyId)
 
@@ -116,10 +121,10 @@ service cloud.firestore {
         );
 
         // uid is immutable — prevents document ID spoofing via admin update
-        allow update: if (isAdmin(familyId) && request.resource.data.uid == resource.data.uid)
+        allow update: if photoDataOk() && ((isAdmin(familyId) && request.resource.data.uid == resource.data.uid)
           || (signedIn()
             && uid == request.auth.uid
-            && request.resource.data.diff(resource.data).changedKeys().hasOnly(['name', 'avatar', 'photoURL', 'points', 'streak', 'updatedAt', 'birthYear', 'sex', 'heightCm', 'weightKg', 'activityLevel']));
+            && request.resource.data.diff(resource.data).changedKeys().hasOnly(['name', 'avatar', 'photoURL', 'photoData', 'points', 'streak', 'updatedAt', 'birthYear', 'sex', 'heightCm', 'weightKg', 'activityLevel'])));
         // birthYear/sex/heightCm/weightKg/activityLevel нэмэгдэв (2026-09-12):
         // хувь хүний илчлэгийн зорилт (Mifflin-St Jeor) тооцоход хэрэглэнэ.
         // ЗӨВХӨН ӨӨРӨӨ бөглөнө — админ ч бусдын биеийн үзүүлэлтийг оруулахгүй
@@ -140,6 +145,9 @@ service cloud.firestore {
         // нэг удаад +200-аас ихгүй) streak-ийг өнгөрсөн өдрүүдээр дахин
         // тооцоолох үед хууль ёсны их үсрэлт гардаг тул хуурамч алдаа
         // үүсгэх эрсдэлтэй. Тиймээс энд хөндөөгүй.
+
+        // 'photoData' (2026-10-28): Storage-гүй жижиг профайл зураг (base64,
+        // ~10КБ). photoDataOk() нь хэмжээг 20000 тэмдэгтээр хязгаарлана.
 
         allow delete: if isAdmin(familyId);
       }

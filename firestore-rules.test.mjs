@@ -158,6 +158,26 @@ await seed();
 }
 
 // ══════════════════════════════════════════════════════════════════════
+console.log('━━━ Г. ЗУРАГ (photoData) БА АДМИН ШИЛЖҮҮЛЭХ ━━━');
+await seed();
+{
+  const kid = env.authenticatedContext('child_uid').firestore();
+  const parent = env.authenticatedContext('parent_uid').firestore();
+  const smallPhoto = `data:image/jpeg;base64,${'A'.repeat(9000)}`;
+  const hugePhoto = `data:image/jpeg;base64,${'A'.repeat(30000)}`;
+  await check('Г1. Гишүүн өөрийн жижиг зургаа (photoData) хадгалах', 'allow',
+    () => setDoc(doc(kid, 'families/FAM_VICTIM/members/child_uid'), { photoData: smallPhoto }, { merge: true }));
+  await check('Г2. Хэт том photoData (>20000)', 'deny',
+    () => setDoc(doc(kid, 'families/FAM_VICTIM/members/child_uid'), { photoData: hugePhoto }, { merge: true }));
+  await check('Г3. Гишүүн бусдын зургийг солих', 'deny',
+    () => setDoc(doc(kid, 'families/FAM_VICTIM/members/parent_uid'), { photoData: smallPhoto }, { merge: true }));
+  await check('Г4. Админ өөр гишүүнийг админ болгох', 'allow',
+    () => setDoc(doc(parent, 'families/FAM_VICTIM/members/child_uid'), { role: 'parent' }, { merge: true }));
+  await check('Г5. Админ өөрийгөө энгийн гишүүн болгох (шилжүүлэлт)', 'allow',
+    () => setDoc(doc(parent, 'families/FAM_VICTIM/members/parent_uid'), { role: 'member' }, { merge: true }));
+}
+
+// ══════════════════════════════════════════════════════════════════════
 console.log(`\n${pass} давсан, ${fail} унасан\n`);
 if (fail) {
   console.log('Унасан тестүүд:');

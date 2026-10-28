@@ -15,9 +15,10 @@ import {
 } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from '../firebase';
 import { defaultMeals, defaultFamilyRewards } from '../data';
-import { normalizeTask, getBaseTasks, defaultNotificationSettings } from '../constants/tasks';
+import { normalizeTask, getStarterTasks, defaultNotificationSettings } from '../constants/tasks';
 import { normalizeGroupType, getGroupTypeMeta } from '../constants/groupTypes';
 import { formatDateKey, getTodayDateKey, getWeekAgoKeys, dayNamesShort } from '../utils/dates';
+import { getSleepSummary } from '../utils/sleep';
 import { calculateStreak } from '../utils/streak';
 import { getCycleStartKey } from '../utils/journey';
 import { sanitizeInviteCode, generateInviteCode } from '../utils/invite';
@@ -310,8 +311,15 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
       countValue: Number(log.countValue) || 0,
       startedAt: log.startedAt || '',
       endedAt: log.endedAt || '',
+      bedTime: log.bedTime || '',
+      wakeTime: log.wakeTime || '',
     };
   }), [baseTasks, logsForSelectedDate]);
+  // Сонгосон гишүүний сүүлийн 30 хоногийн нойрны тойм (Стат дэлгэцэнд).
+  const sleepSummary = useMemo(() => {
+    const sleepTask = baseTasks.find((task) => task.detailType === 'hours');
+    return sleepTask ? getSleepSummary({ dailyLogs, memberId: selectedMemberId, taskId: sleepTask.id, goodRange: sleepTask.goodRange }) : null;
+  }, [baseTasks, dailyLogs, selectedMemberId]);
   const completedCount = currentDisplayTasks.filter((task) => task.done).length;
   const requiredCount = currentDisplayTasks.filter((task) => task.required !== false).length;
   const remainingCount = Math.max(currentDisplayTasks.length - completedCount, 0);
@@ -357,8 +365,9 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     });
   }, [dailyLogs, selectedMemberId, tasksByMember]);
 
-  const handleCreateFamily = async ({ familyName, displayName, avatar = '🙂', extraMembers = [], groupType = 'family' }) => {
-    if (!isFirebaseConfigured || !user || !db) return setFamilySetupError('Firebase config болон login шаардлагатай.');
+  const handleCreateFamily = async ({ familyName, displayName, avatar = '🙂', photoData = null, extraMembers = [], groupType = 'family', coreTaskIds = null }) => {
+    if (!user) return setFamilySetupError('Нэвтэрч орно уу.');
+    if ((!isFirebaseConfigured || !db) && !user.isLocalDemo) return setFamilySetupError('Firebase config болон login шаардлагатай.');
     const safeFamilyName = (familyName || '').trim() || 'Миний гэр бүл';
     // Танигдаагүй/хоосон утга АЮУЛГҮЙ 'family' рүү буулгана — доор бичих
     // getBaseTasks(safeGroupType, …) дуудлагууд ямагт хүчинтэй пак сонгоно.
@@ -371,9 +380,27 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
         uid: `profile_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 7)}`,
         name: member.name.trim(),
         avatar: member.avatar || '🙂',
+        memberRole: member.memberRole || null,
+        isKid: Boolean(member.isKid),
+        photoData: typeof member.photoData === 'string' ? member.photoData : null,
       }));
+    const safeCoreTaskIds = Array.isArray(coreTaskIds) && coreTaskIds.length ? coreTaskIds : null;
+    const safePhotoData = typeof photoData === 'string' ? photoData : null;
     setFamilySetupError(null);
     setFamilyMissing(false);
+    // Локал demo (Firebase тохиргоогүй, зөвхөн dev): бүх өгөгдөл зөвхөн
+    // санах ойд — дэлгэцүүдийг Firebase-гүйгээр үзэж засварлахад зориулсан.
+    if (user.isLocalDemo) {
+      const meta = getGroupTypeMeta(safeGroupType);
+      const owner = { uid: user.uid, name: safeDisplayName, avatar, photoData: safePhotoData, role: meta.roles.admin, points: 0, streak: 0, joinedAt: new Date().toISOString() };
+      const extras = preparedExtraMembers.map((member) => ({ ...member, role: meta.roles.member, points: 0, streak: 0, joinedAt: new Date().toISOString(), managedByUid: user.uid }));
+      setMembers(Object.fromEntries([owner, ...extras].map((member) => [member.uid, member])));
+      setTasksByMember(Object.fromEntries([[owner.uid, getStarterTasks(safeGroupType, false, safeCoreTaskIds)], ...extras.map((member) => [member.uid, getStarterTasks(safeGroupType, member.isKid, safeCoreTaskIds)])]));
+      setSelectedMemberId(owner.uid);
+      setFamilyProfile({ familyId: 'local-demo', familyName: safeFamilyName, groupType: safeGroupType, inviteCode: 'FAM-DEMO00', ownerUid: user.uid, cycleStartKey: getTodayDateKey(), coreTaskIds: safeCoreTaskIds });
+      setFamilyId('local-demo');
+      return;
+    }
     setFamilySetupLoading(true);
     try {
       const familyRef = doc(collection(db, 'families'));
@@ -405,6 +432,8 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
           // клиент талд шууд уншигдахгүй байх мөч бий — тиймээс огнооны
           // түлхүүрийг ТУСДАА, энгийн string-ээр хадгална.
           cycleStartKey: getTodayDateKey(),
+          // Админы сонгосон үндсэн дадлууд — шинээр нэгдэх гишүүнд ч өгнө.
+          ...(safeCoreTaskIds ? { coreTaskIds: safeCoreTaskIds } : {}),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
@@ -416,13 +445,14 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
           uid: user.uid,
           name: safeDisplayName,
           avatar,
+          ...(safePhotoData ? { photoData: safePhotoData } : {}),
           role: ownerRole,
           points: 0,
           streak: 0,
           joinedAt: new Date().toISOString(),
           updatedAt: serverTimestamp(),
         });
-        transaction.set(taskRef, { uid: user.uid, tasks: getBaseTasks(safeGroupType, false), updatedAt: serverTimestamp() });
+        transaction.set(taskRef, { uid: user.uid, tasks: getStarterTasks(safeGroupType, false, safeCoreTaskIds), updatedAt: serverTimestamp() });
         // Урилгын документэд groupType/maxMembers-ийг ХУУЛЖ хадгална.
         // Шалтгаан: нэгдэж буй хүн families/{id} баримтыг УНШИХ эрхгүй
         // (дүрэм: read if isFamilyMember) — харин inviteCodes/{code}-г get
@@ -469,6 +499,9 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
               uid: member.uid,
               name: member.name,
               avatar: member.avatar,
+              ...(member.memberRole ? { memberRole: member.memberRole } : {}),
+              ...(member.photoData ? { photoData: member.photoData } : {}),
+              isKid: member.isKid,
               role: getGroupTypeMeta(safeGroupType).roles.member,
               points: 0,
               streak: 0,
@@ -481,7 +514,7 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
               // isKid=true семантик зөвхөн 'family' төрөлд ач холбогдолтой
               // (нойрны зөвлөмж өөрчлөгдөнө) — бусад төрөлд аюулгүйгээр
               // үл тоомсорлогдоно.
-              tasks: getBaseTasks(safeGroupType, true),
+              tasks: getStarterTasks(safeGroupType, member.isKid, safeCoreTaskIds),
               updatedAt: serverTimestamp(),
             });
           });
@@ -572,7 +605,9 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
         const taskRef = doc(db, 'families', stagedFamilyId, 'tasks', user.uid);
         const taskSnap = await getDoc(taskRef);
         if (!taskSnap.exists()) {
-          await setDoc(taskRef, { uid: user.uid, tasks: getBaseTasks(stagedGroupType, false), updatedAt: serverTimestamp() });
+          const familySnap = await getDoc(doc(db, 'families', stagedFamilyId));
+          const familyCoreIds = familySnap.data()?.coreTaskIds;
+          await setDoc(taskRef, { uid: user.uid, tasks: getStarterTasks(stagedGroupType, false, Array.isArray(familyCoreIds) ? familyCoreIds : null), updatedAt: serverTimestamp() });
         }
       } catch (taskErr) {
         // Эгзэгтэй биш: гишүүнчлэл аль хэдийн бичигдсэн, дадлаа дараа нэмж болно.
@@ -905,6 +940,53 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
       // Дүрэм дээр 'photoURL' нь өөрийн гишүүний засварлаж болох талбарын
       // жагсаалтад байх ёстой (FIRESTORE_RULES.txt, members/{uid} update).
       return { ok: false, message: 'Зургийг хадгалж чадсангүй. Firestore дүрмээ шинэчилсэн эсэхээ шалгана уу.' };
+    }
+  };
+
+  // Storage-гүй профайл зураг (base64 data URL, photos.pickAvatarAsDataUrl).
+  const saveMemberPhotoData = async (uid, photoData) => {
+    const prevMembers = membersRef.current || {};
+    const nextMembers = { ...prevMembers, [uid]: { ...(prevMembers[uid] || {}), photoData } };
+    membersRef.current = nextMembers;
+    setMembers(nextMembers);
+    if (!isFirebaseConfigured || !db || !familyId || !uid || user?.isLocalDemo) return { ok: true, local: true };
+    try {
+      await setDoc(doc(db, 'families', familyId, 'members', uid), { photoData, updatedAt: serverTimestamp() }, { merge: true });
+      return { ok: true };
+    } catch (e) {
+      console.error('Save member photoData error:', e.code, e.message);
+      membersRef.current = prevMembers;
+      setMembers(prevMembers);
+      return { ok: false, message: 'Зургийг хадгалж чадсангүй. Firestore дүрмээ шинэчилсэн эсэхээ шалгана уу.' };
+    }
+  };
+
+  // Админ эрх шилжүүлэх / нэмэх. keepSelf=false бол шинэ хүнийг админ болгоод
+  // өөрийгөө энгийн гишүүн болгоно. Дүрэм role дээр суурилдаг тул (isAdmin)
+  // хэд хэдэн админ байж болно; ownerUid өөрчлөгдөхгүй (зөвхөн бүлэг устгахад).
+  const transferAdmin = async (targetUid, { keepSelf = false } = {}) => {
+    if (!canManage || !user?.uid || !targetUid || targetUid === user.uid) return { ok: false, message: 'Зөвхөн админ эрх шилжүүлнэ.' };
+    const target = members[targetUid];
+    if (!target || target.managedByUid) return { ok: false, message: 'Зөвхөн өөрөө нэвтэрдэг гишүүнийг админ болгоно.' };
+    const meta = getGroupTypeMeta(familyProfile?.groupType);
+    const prevMembers = membersRef.current || {};
+    const nextMembers = { ...prevMembers, [targetUid]: { ...prevMembers[targetUid], role: meta.roles.admin } };
+    if (!keepSelf) nextMembers[user.uid] = { ...prevMembers[user.uid], role: 'member' };
+    membersRef.current = nextMembers;
+    setMembers(nextMembers);
+    if (!isFirebaseConfigured || !db || !familyId || user.isLocalDemo) return { ok: true, local: true };
+    try {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'families', familyId, 'members', targetUid), { role: meta.roles.admin, updatedAt: serverTimestamp() }, { merge: true });
+      await batch.commit();
+      // Өөрийгөө ДАРАА нь бууруулна — эс бөгөөс бууруулсны дараа админ эрхгүй болж шинэ хүнээ дэвшүүлж чадахгүй.
+      if (!keepSelf) await setDoc(doc(db, 'families', familyId, 'members', user.uid), { role: 'member', updatedAt: serverTimestamp() }, { merge: true });
+      return { ok: true };
+    } catch (e) {
+      console.error('Transfer admin error:', e.code, e.message);
+      membersRef.current = prevMembers;
+      setMembers(prevMembers);
+      return { ok: false, message: 'Админ эрх шилжүүлж чадсангүй. Дахин оролдоно уу.' };
     }
   };
 
@@ -1325,6 +1407,7 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     currentMember,
     selectedUserName,
     currentUserMember,
+    sleepSummary,
     canManage,
     totalFamilyPoints,
     baseTasks,
@@ -1338,6 +1421,8 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
     weeklyReport,
     weeklyTrend,
     saveMemberPhoto,
+    saveMemberPhotoData,
+    transferAdmin,
     saveFamilyCover,
     listArchives,
     saveMemberProfile,

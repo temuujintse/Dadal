@@ -172,6 +172,7 @@ function MainApp() {
     notificationSettings,
     currentMember,
     selectedUserName,
+    sleepSummary,
     currentUserMember,
     canManage,
     totalFamilyPoints,
@@ -197,6 +198,8 @@ function MainApp() {
     saveNotificationSettings,
     resetMonthlyProgress,
     saveMemberPhoto,
+    saveMemberPhotoData,
+    transferAdmin,
     saveFamilyCover,
     listArchives,
     saveMemberProfile,
@@ -319,9 +322,21 @@ function MainApp() {
   const loadPhotoService = () => import('./services/photos');
 
   const handleChangeMemberPhoto = useCallback(async (uid) => {
-    if (!PHOTO_UPLOAD_ENABLED || !familyId || !uid || photoUploading) return;
+    if (!familyId || !uid || photoUploading) return;
     setPhotoUploading(true);
     try {
+      // Storage (Blaze) унтраалттай үед жижиг зургийг Firestore-д шууд хадгална.
+      if (!PHOTO_UPLOAD_ENABLED) {
+        const { pickAvatarAsDataUrl } = await loadPhotoService();
+        const picked = await pickAvatarAsDataUrl();
+        if (!picked.ok) {
+          if (picked.code !== 'CANCELED') showToast(picked.message);
+          return;
+        }
+        const savedData = await saveMemberPhotoData(uid, picked.dataUrl);
+        showToast(savedData.ok ? 'Зураг шинэчлэгдлээ 📸' : savedData.message);
+        return;
+      }
       const { pickAndUploadMemberPhoto } = await loadPhotoService();
       const uploaded = await pickAndUploadMemberPhoto({ familyId, uid });
       // CANCELED — хэрэглэгч өөрөө буцсан, алдаа биш тул чимээгүй өнгөрнө.
@@ -334,7 +349,7 @@ function MainApp() {
     } finally {
       setPhotoUploading(false);
     }
-  }, [familyId, photoUploading, saveMemberPhoto]);
+  }, [familyId, photoUploading, saveMemberPhoto, saveMemberPhotoData]);
 
   const handleChangeCoverPhoto = useCallback(async () => {
     if (!PHOTO_UPLOAD_ENABLED || !familyId || photoUploading) return;
@@ -554,8 +569,8 @@ function MainApp() {
             foodLogDateLabel={headerDateStr}
           />
         )}
-        {activeTab === 'stats' && <StatsScreen groupType={familyProfile?.groupType || 'family'} userStats={displayStats} selectedUser={selectedUserName} progress={progress} weeklyReport={weeklyReport} weeklyTrend={weeklyTrend} completedCount={completedCount} totalTasks={currentDisplayTasks.length} />}
-        {activeTab === 'settings' && <SettingsScreen familyProfile={familyProfile} selectedUser={selectedUserName} currentMember={currentUserMember} members={memberList} notificationSettings={notificationSettings} onSaveNotificationSettings={saveNotificationSettings} onLogout={handleLogout} onResetOnboarding={handleResetOnboarding} onSaveMemberProfile={saveMemberProfile} />}
+        {activeTab === 'stats' && <StatsScreen sleepSummary={sleepSummary} groupType={familyProfile?.groupType || 'family'} userStats={displayStats} selectedUser={selectedUserName} progress={progress} weeklyReport={weeklyReport} weeklyTrend={weeklyTrend} completedCount={completedCount} totalTasks={currentDisplayTasks.length} />}
+        {activeTab === 'settings' && <SettingsScreen familyProfile={familyProfile} selectedUser={selectedUserName} currentMember={currentUserMember} members={memberList} notificationSettings={notificationSettings} onSaveNotificationSettings={saveNotificationSettings} onLogout={handleLogout} onResetOnboarding={handleResetOnboarding} onSaveMemberProfile={saveMemberProfile} onTransferAdmin={async (uid, options) => { const result = await transferAdmin(uid, options); showToast(result.ok ? 'Админ эрх шинэчлэгдлээ' : result.message); }} />}
       </ScrollView>
 
       <ConfettiBurst key={confettiKey} active={confettiKey > 0} />

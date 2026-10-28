@@ -18,6 +18,16 @@ export const GROUP_TYPES = {
     // 'admin' анги эрх нь адилхан ч, гэр бүлийн контекстэд 'parent' нэрийг
     // харуулна (SettingsScreen, invite урилга гэх мэт газарт хэрэглэгдэнэ).
     roles: { admin: 'parent', member: 'child' },
+    // Гишүүн нэмэхдээ сонгох үүрэг. kid=true бол хүүхдийн дадлын багц
+    // (жишээ нь 10-11 цагийн нойр) өгнө; adult нь админ болж чадна.
+    memberRoles: [
+      { id: 'wife', label: 'Эхнэр', emoji: '👩' },
+      { id: 'husband', label: 'Нөхөр', emoji: '👨' },
+      { id: 'son', label: 'Хүү', emoji: '👦', kid: true },
+      { id: 'daughter', label: 'Охин', emoji: '👧', kid: true },
+      { id: 'mother', label: 'Ээж', emoji: '👵' },
+      { id: 'father', label: 'Аав', emoji: '👴' },
+    ],
     showRewards: true,
     showMembersRow: true,
     // Урих код харуулах эсэх (хувь хүн дээр утгагүй).
@@ -39,6 +49,7 @@ export const GROUP_TYPES = {
     description: 'Найзуудтайгаа хамт зорилгодоо хүрнэ',
     maxMembers: 20,
     roles: { admin: 'admin', member: 'member' },
+    memberRoles: [{ id: 'friend', label: 'Найз', emoji: '🧑' }],
     showRewards: true,
     showMembersRow: true,
     showInvite: true,
@@ -79,6 +90,7 @@ export const GROUP_TYPES = {
     description: 'Хоёулаа хамт сайн дадал төлөвшүүлнэ',
     maxMembers: 2,
     roles: { admin: 'admin', member: 'member' },
+    memberRoles: [{ id: 'partner', label: 'Хань', emoji: '💞' }],
     showRewards: true,
     showMembersRow: true,
     showInvite: true,
@@ -87,6 +99,10 @@ export const GROUP_TYPES = {
     createLabel: 'Бүлэг үүсгэх',
   },
 };
+
+export const getMemberRole = (groupType, roleId) => (
+  getGroupTypeMeta(groupType).memberRoles?.find((role) => role.id === roleId) || null
+);
 
 export const GROUP_TYPE_LIST = Object.values(GROUP_TYPES);
 

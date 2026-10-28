@@ -65,7 +65,10 @@ export const normalizeTask = (rawTask, index = 0) => {
   const meta = BUILTIN_TASK_META[task.id] || {};
   return {
     id: String(task.id || `task_${Date.now()}_${index}`),
-    text: task.text || '',
+    // Хуучин бүлгүүдэд хадгалагдсан нойрны дадлын нэрийг шинэ, тодорхой нэрээр харуулна.
+    text: task.id === 'wake_sleep' && task.text === 'Эрт сэрэх, нойр сайн авах'
+      ? `Эрт сэрэх, ${Array.isArray(task.goodRange) ? task.goodRange.join('-') : '7-8'} цагийн нойр авах`
+      : task.text || '',
     note: task.note || '',
     hasInput: Boolean(task.hasInput),
     inputPlaceholder: task.inputPlaceholder || 'Тэмдэглэл',
@@ -79,6 +82,8 @@ export const normalizeTask = (rawTask, index = 0) => {
     // 10 (эсвэл difficulty-ийн default) болж хувирдаг байв.
     points: toNumber(task.points, toNumber(POINTS_BY_DIFFICULTY[task.difficulty || 'normal'], 10)),
     required: task.required !== false,
+    // Админы сонгосон "үндсэн" дадал — бүх гишүүнд үйлчилнэ, гишүүн өөрөө устгахгүй.
+    core: Boolean(task.core),
     // Дараалал: баримтад ТОДОРХОЙ бичсэн утга → built-in метадата → таамаг.
     detailType: DETAIL_TYPES.includes(task.detailType)
       ? task.detailType
@@ -102,7 +107,7 @@ export const normalizeTask = (rawTask, index = 0) => {
 
 // ── Гэр бүлийн дадал (өмнөх, өөрчлөгдөөгүй 18 дадал) ─────────────────────
 const familyTasks = (isKid) => [
-  normalizeTask({ id: 'wake_sleep', text: 'Эрт сэрэх, нойр сайн авах', detailType: 'hours', goodRange: isKid ? [10, 11] : [7, 8], tip: isKid ? 'Хүүхэд өдөрт 10-11 цагийн нойр авч өсөж, хүч энергтэй байна.' : 'Та өдөрт 7-8 цагийн нойр авч хүч энергтэй ажиллана.', category: 'health', points: 10, required: true }),
+  normalizeTask({ id: 'wake_sleep', text: isKid ? 'Эрт сэрэх, 10-11 цагийн нойр авах' : 'Эрт сэрэх, 7-8 цагийн нойр авах', detailType: 'hours', goodRange: isKid ? [10, 11] : [7, 8], tip: isKid ? 'Хүүхэд өдөрт 10-11 цагийн нойр авч өсөж, хүч энергтэй байна.' : 'Та өдөрт 7-8 цагийн нойр авч хүч энергтэй ажиллана.', category: 'health', points: 10, required: true }),
   normalizeTask({ id: 'morning_water', text: 'Өглөө бүлээн ус 1-3 аяга уух', detailType: 'count', countMax: 3, tip: 'Өглөө сэрээд бүлээн ус уувал хоол боловсруулах эрхтэн сэрж, бие тэнхээжинэ.', category: 'health', points: 5, difficulty: 'easy', required: true }),
   normalizeTask({ id: 'english_reading', text: 'Ном унших / Англи хэл', note: '10-15 минут', timerMinutes: 15, hasInput: true, inputPlaceholder: 'Хэдэн минут?', category: 'learning', points: 20, difficulty: 'hard', required: true }),
   normalizeTask({ id: 'mongolian_reading', text: 'Монгол ном унших', note: '10-15 минут', timerMinutes: 15, hasInput: true, inputPlaceholder: 'Хэдэн минут?', category: 'learning', points: 15, required: false }),
@@ -164,4 +169,12 @@ const TASK_PACKS = {
 export const getBaseTasks = (groupType = 'family', isKid = false) => {
   const pack = TASK_PACKS[groupType] || TASK_PACKS.family;
   return pack(isKid);
+};
+
+// Шинэ бүлэг үүсгэхэд: админы сонгосон үндсэн дадлуудыг (coreTaskIds) core
+// болгон тэмдэглэж буцаана. coreTaskIds байхгүй (хуучин урсгал) бол бүх багц.
+export const getStarterTasks = (groupType, isKid, coreTaskIds) => {
+  const base = getBaseTasks(groupType, isKid);
+  if (!Array.isArray(coreTaskIds)) return base;
+  return base.filter((task) => coreTaskIds.includes(task.id)).map((task) => ({ ...task, core: true, required: true }));
 };

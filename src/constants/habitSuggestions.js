@@ -29,6 +29,19 @@ export const habitSuggestionGroups = [
       { id: 's_adult_sleep', text: 'Орой эрт унтах', category: 'health', points: 15, note: '23:00-аас өмнө' },
     ],
   },
+  {
+    id: 'everyone',
+    label: 'Бүгдэд',
+    icon: '🌿',
+    items: [
+      { id: 's_all_walk', text: '10 000 алхам алхах', category: 'health', points: 15 },
+      { id: 's_all_noscreen', text: '1 цаг дэлгэцгүй байх', category: 'mindset', points: 15, timerMinutes: 60 },
+      { id: 's_all_meditate', text: '5 минут бясалгал', category: 'mindset', points: 10, timerMinutes: 5 },
+      { id: 's_all_veggie', text: 'Хоолондоо ногоо нэмэх', category: 'nutrition', points: 10 },
+      { id: 's_all_nosugar', text: 'Чихэр, амтлаггүй өдөр', category: 'nutrition', points: 15 },
+      { id: 's_all_thanks', text: 'Талархах 3 зүйл бичих', category: 'mindset', points: 10 },
+    ],
+  },
 ];
 
 export const allHabitSuggestions = habitSuggestionGroups.flatMap((g) => g.items);

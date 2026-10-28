@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, TextInput, Switch, ScrollView, Share } from 'react-native';
+import { Alert, Image, View, Text, TouchableOpacity, TextInput, Switch, ScrollView, Share } from 'react-native';
 import { Copy, LogOut, Bell, Users, Shield, RotateCcw, CircleCheck, Share2, Flame } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
-import { getGroupTypeMeta, isAdminRole } from '../constants/groupTypes';
+import { getGroupTypeMeta, getMemberRole, isAdminRole } from '../constants/groupTypes';
 import { ACTIVITY_LEVELS, SEX_OPTIONS, calcDailyCalories } from '../utils/nutrition';
 import { GENERIC_DAILY_CALORIE_TARGET } from '../constants/foodCalories';
 
@@ -16,6 +16,7 @@ export default function SettingsScreen({
   onLogout,
   onResetOnboarding,
   onSaveMemberProfile,
+  onTransferAdmin,
 }) {
   const groupMeta = getGroupTypeMeta(familyProfile?.groupType);
   // "Эцэг эх" гэдэг ЗӨВХӨН 'family' төрөлд утга учиртай ярианы нэр —
@@ -397,15 +398,42 @@ export default function SettingsScreen({
 
       <View className="bg-white border border-gray-100 rounded-3xl p-5 mb-4">
         <Text className="text-lg font-black text-gray-950 mb-3">Гишүүд</Text>
-        {members.map((member) => (
-          <View key={member.uid} className="flex-row items-center justify-between py-3 border-b border-gray-100">
-            <View>
-              <View className="flex-row items-center gap-2"><Text className="text-2xl">{member.avatar || '🙂'}</Text><Text className="font-black text-gray-900">{member.name}</Text></View>
-              <Text className="text-[10px] font-bold text-gray-400">{memberRoleLabel(member.role)}</Text>
+        {members.map((member) => {
+          const roleMeta = getMemberRole(familyProfile?.groupType, member.memberRole);
+          // Админ эрх зөвхөн өөрөө нэвтэрдэг, насанд хүрсэн гишүүнд (хүүхдийн
+          // профайл нэвтэрч чадахгүй тул админ болох утгагүй).
+          const canPromote = isAdminRole(currentMember?.role) && onTransferAdmin
+            && member.uid !== currentMember?.uid && !isAdminRole(member.role)
+            && !member.managedByUid && !member.isKid && !roleMeta?.kid;
+          const promote = () => Alert.alert(
+            `${member.name}-г админ болгох уу?`,
+            'Админ нь дадал, шагнал, гишүүдийг удирдана.',
+            [
+              { text: 'Болих', style: 'cancel' },
+              { text: 'Хамт админ', onPress: () => onTransferAdmin(member.uid, { keepSelf: true }) },
+              { text: 'Эрхээ шилжүүлэх', style: 'destructive', onPress: () => onTransferAdmin(member.uid, { keepSelf: false }) },
+            ]
+          );
+          return (
+            <View key={member.uid} className="flex-row items-center justify-between py-3 border-b border-gray-100">
+              <View className="flex-1 pr-2">
+                <View className="flex-row items-center gap-2">
+                  {member.photoURL || member.photoData
+                    ? <Image source={{ uri: member.photoURL || member.photoData }} style={{ width: 30, height: 30, borderRadius: 10 }} />
+                    : <Text className="text-2xl">{member.avatar || '🙂'}</Text>}
+                  <Text className="font-black text-gray-900">{member.name}</Text>
+                </View>
+                <Text className="text-[10px] font-bold text-gray-400">{roleMeta ? `${roleMeta.label} · ` : ''}{memberRoleLabel(member.role)}</Text>
+              </View>
+              {canPromote ? (
+                <TouchableOpacity onPress={promote} accessibilityRole="button" accessibilityLabel={`${member.name}-г админ болгох`} className="px-3 py-2 mr-2 rounded-xl bg-green-50 border border-green-200">
+                  <Text className="text-[11px] font-black text-green-700">Админ болгох</Text>
+                </TouchableOpacity>
+              ) : null}
+              <Text className="font-black" style={{ color: '#f97316' }}>{member.points || 0}</Text>
             </View>
-            <Text className="font-black" style={{ color: '#f97316' }}>{member.points || 0}</Text>
-          </View>
-        ))}
+          );
+        })}
       </View>
 
       <TouchableOpacity
