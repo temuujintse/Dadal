@@ -1,7 +1,9 @@
-import React, { memo, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, ImageBackground, PanResponder, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import EmptyHabitState from '../components/EmptyHabitState';
 import ProgressRing from '../components/ProgressRing';
+import MoodBubble from '../components/MoodBubble';
+import { BRAND_BLUE } from '../constants/theme';
 import { getGroupTypeMeta } from '../constants/groupTypes';
 import { PHOTO_UPLOAD_ENABLED } from '../constants/features';
 import { getJourneyState } from '../utils/journey';
@@ -132,7 +134,7 @@ const TaskCard = memo(function TaskCard({
               {index ? (
                 <Text className={`text-[11px] font-black ${done ? 'text-green-500' : 'text-gray-400'}`}>{index}.</Text>
               ) : null}
-              <Text numberOfLines={2} className={`flex-1 text-[15px] leading-5 font-black ${done ? 'text-gray-400 line-through' : 'text-gray-950'}`}>{task.text}</Text>
+              <Text numberOfLines={2} className={`flex-1 text-[15px] leading-5 font-black ${done ? 'text-gray-400 line-through' : ''}`} style={done ? undefined : { color: BRAND_BLUE }}>{task.text}</Text>
               <Text className="text-[10px] font-black text-orange-600 bg-orange-50 px-2 py-1 rounded-full">+{task.points}</Text>
             </View>
             <Text numberOfLines={1} className="text-xs font-semibold text-gray-400 mt-1">
@@ -316,7 +318,7 @@ const TaskCard = memo(function TaskCard({
                 hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                 accessibilityRole="button"
                 accessibilityLabel="Таймер эхлүүлэх"
-                className="flex-row items-center gap-1.5 px-4 py-2.5 bg-gray-900 rounded-2xl"
+                className="flex-row items-center gap-1.5 px-4 py-2.5 bg-blue-600 rounded-2xl"
                 style={{ minHeight: 44 }}
               >
                 {timerActive && timerRunning ? <Pause size={14} color="#fff" /> : <Play size={14} color="#fff" />}
@@ -426,6 +428,17 @@ const DashboardScreen = memo(function DashboardScreen({
   onRemoveFoodEntry,
 }) {
   const [showSuggestionSheet, setShowSuggestionSheet] = useState(false);
+  // Өдрийн мөрийг сонгосон (анхдагчаар өнөөдөр) өдөр рүү төвлөрүүлж scroll хийнэ.
+  // Нэг нүд = 52px өргөн + 8px зай.
+  const dateStripRef = useRef(null);
+  const dateStripWidthRef = useRef(0);
+  const scrollDateStripToSelected = useCallback((animated = true) => {
+    const index = (datesArray || []).findIndex((d) => formatDateKey(d) === selectedDate);
+    if (index < 0 || !dateStripRef.current) return;
+    const x = Math.max(0, index * 60 - (dateStripWidthRef.current - 52) / 2);
+    dateStripRef.current.scrollTo({ x, animated });
+  }, [datesArray, selectedDate]);
+  useEffect(() => { scrollDateStripToSelected(true); }, [scrollDateStripToSelected]);
   const [showArchiveModal, setShowArchiveModal] = useState(false);
   const rewardPct = activeReward?.target ? Math.min(Math.round((totalFamilyPoints / activeReward.target) * 100), 100) : 0;
   // Дуусгасан дадлыг доош ТҮЛХЭХГҮЙ. Өмнө нь
@@ -521,7 +534,7 @@ const DashboardScreen = memo(function DashboardScreen({
                 ) : (
                   <Text className="text-3xl">{member.avatar || member.name?.substring(0, 1) || '🙂'}</Text>
                 )}
-                {member.streak > 0 ? <View className="absolute -right-1 -top-1 bg-slate-900 px-1.5 py-0.5 rounded-full"><Text className="text-[8px] text-white font-black">🔥{member.streak}</Text></View> : null}
+                {member.streak > 0 ? <View className="absolute -right-1 -top-1 bg-blue-600 px-1.5 py-0.5 rounded-full"><Text className="text-[8px] text-white font-black">🔥{member.streak}</Text></View> : null}
               </View>
               <Text numberOfLines={1} className={`text-[11px] font-bold mt-1.5 max-w-[64px] text-center ${active ? 'text-orange-600' : 'text-gray-500'}`}>{member.name}</Text>
               {/* Зургаа солих — зөвхөн ӨӨРИЙН профайл дээр. Firestore дүрэм
@@ -634,7 +647,13 @@ const DashboardScreen = memo(function DashboardScreen({
             ) : null}
           </View>
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }}>
+        <ScrollView
+          ref={dateStripRef}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ gap: 8, paddingVertical: 2 }}
+          onLayout={(e) => { dateStripWidthRef.current = e.nativeEvent.layout.width; scrollDateStripToSelected(false); }}
+        >
           {datesArray.map((d) => {
             const key = formatDateKey(d);
             const isSelected = key === selectedDate;
@@ -650,16 +669,17 @@ const DashboardScreen = memo(function DashboardScreen({
                 disabled={isFuture}
                 accessibilityRole="button"
                 accessibilityLabel={isFuture ? `${d.getDate()} — ирээдүй, сонгох боломжгүй` : undefined}
-                className={`w-[52px] h-[66px] rounded-3xl items-center justify-center ${isSelected ? 'bg-gray-950' : isToday ? 'bg-orange-50 border border-orange-200' : 'bg-white border border-gray-100'} ${isFuture ? 'opacity-40' : ''}`}
+                className={`w-[52px] h-[66px] rounded-3xl items-center justify-center ${isSelected ? '' : isToday ? 'bg-blue-50 border border-blue-200' : 'bg-white border border-gray-100'} ${isFuture ? 'opacity-40' : ''}`}
+                style={isSelected ? { backgroundColor: BRAND_BLUE } : undefined}
               >
-                <Text className={`text-[10px] font-black uppercase mb-1 ${isSelected ? 'text-gray-300' : 'text-gray-400'}`}>{dayNamesShort[d.getDay()]}</Text>
+                <Text className={`text-[10px] font-black uppercase mb-1 ${isSelected ? 'text-blue-100' : 'text-gray-400'}`}>{dayNamesShort[d.getDay()]}</Text>
                 <Text className={`text-lg font-black ${isSelected ? 'text-white' : 'text-gray-900'}`}>{d.getDate()}</Text>
-                {isToday && !isSelected ? <View className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1" /> : null}
+                {isToday && !isSelected ? <View className="w-1.5 h-1.5 rounded-full mt-1" style={{ backgroundColor: BRAND_BLUE }} /> : null}
               </TouchableOpacity>
             );
           })}
         </ScrollView>
-        <Text className="text-[10px] font-bold text-gray-400 mt-2">Ирээдүйн өдрүүд дээр дадал тэмдэглэх боломжгүй — зөвхөн өнөөдөр болон өнгөрсөн өдрийг сонгоно уу.</Text>
+        <Text className="text-[10px] font-bold text-gray-400 mt-2">Ирээдүйн өдөрт тэмдэглэх боломжгүй.</Text>
       </View>
 
       <View className="flex-row items-center justify-between mt-1">
@@ -686,7 +706,7 @@ const DashboardScreen = memo(function DashboardScreen({
               accessibilityRole="button"
               accessibilityLabel={isEditingTasks ? 'Дадлын өөрчлөлтийг хадгалах' : 'Дадлаа засах'}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              className={`w-11 h-11 rounded-2xl items-center justify-center border ${isEditingTasks ? 'bg-gray-900 border-gray-900' : 'bg-white border-gray-200'}`}
+              className={`w-11 h-11 rounded-2xl items-center justify-center border ${isEditingTasks ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-200'}`}
               style={{ minHeight: 44, minWidth: 44 }}
             >
               {isEditingTasks ? <Save size={18} color="#fff" /> : <SlidersHorizontal size={18} color="#64748b" />}
@@ -806,23 +826,13 @@ const DashboardScreen = memo(function DashboardScreen({
           Өмнө нь огнооны strip-ийн шууд дараа, дадлын жагсаалтаас ӨМНӨ байсан
           тул өдрийн ажлаа хараахан хийгээгүй байхад "өнөөдөр ямар байна?" гэж
           асуудаг байв. Одоо өдрийн дүнгээ хараад хариулна. */}
-      <View className="bg-white border border-gray-100 rounded-3xl p-4 flex-row items-center justify-between">
-        <View className="flex-1 pr-3">
-          <Text className="text-[11px] font-black uppercase text-gray-400">Сэтгэл зүй</Text>
-          <Text className="text-base font-black text-gray-900">Өнөөдөр ямар байна?</Text>
-        </View>
-        <View className="flex-row gap-2">
-          {moods.map((m) => {
-            const selected = currentMood === m.id;
-            const MoodIcon = m.Icon;
-            return (
-              <TouchableOpacity key={m.id} onPress={() => onSelectMood?.(m.id)} accessibilityRole="button" accessibilityLabel={`Сэтгэл зүй: ${m.id}`}>
-                <View className="w-11 h-11 rounded-2xl items-center justify-center" style={{ backgroundColor: selected ? m.bg : '#f8fafc' }}>
-                  <MoodIcon size={23} color={selected ? m.color : '#cbd5e1'} />
-                </View>
-              </TouchableOpacity>
-            );
-          })}
+      <View className="bg-white border border-gray-100 rounded-3xl p-5">
+        <Text className="text-[11px] font-black uppercase text-gray-400">Сэтгэл зүй</Text>
+        <Text className="text-base font-black text-gray-900">Өнөөдөр ямар байна?</Text>
+        <View className="flex-row justify-around mt-4">
+          {moods.map((m) => (
+            <MoodBubble key={m.id} mood={m} selected={currentMood === m.id} dimmed={Boolean(currentMood) && currentMood !== m.id} onPress={() => onSelectMood?.(m.id)} />
+          ))}
         </View>
       </View>
 

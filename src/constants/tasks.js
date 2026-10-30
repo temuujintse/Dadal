@@ -61,7 +61,11 @@ export const normalizeTask = (rawTask, index = 0) => {
   // Firestore-оос ирсэн хуучин/корrupt өгөгдөл дотор null, эсвэл object биш
   // элемент орж ирвэл task.id уншихад апп шууд crash хийдэг байсан —
   // хоосон task болгон хувиргаад үргэлжлүүлнэ.
-  const task = rawTask && typeof rawTask === 'object' ? rawTask : {};
+  const rawTaskObj = rawTask && typeof rawTask === 'object' ? rawTask : {};
+  // Хуучин "Ном унших / Англи хэл" дадлыг Монгол/Англи ном сонгодог шинэ хэлбэрт шилжүүлнэ.
+  const task = rawTaskObj.id === 'english_reading' && rawTaskObj.text === 'Ном унших / Англи хэл'
+    ? { ...rawTaskObj, text: 'Ном унших 10-15 минут', detailType: 'duration', options: ['Монгол ном', 'Англи ном'], hasInput: false, note: '', tip: 'Өнөөдөр аль номыг уншсанаа сонгоно уу.' }
+    : rawTaskObj;
   const meta = BUILTIN_TASK_META[task.id] || {};
   return {
     id: String(task.id || `task_${Date.now()}_${index}`),
@@ -109,9 +113,8 @@ export const normalizeTask = (rawTask, index = 0) => {
 const familyTasks = (isKid) => [
   normalizeTask({ id: 'wake_sleep', text: isKid ? 'Эрт сэрэх, 10-11 цагийн нойр авах' : 'Эрт сэрэх, 7-8 цагийн нойр авах', detailType: 'hours', goodRange: isKid ? [10, 11] : [7, 8], tip: isKid ? 'Хүүхэд өдөрт 10-11 цагийн нойр авч өсөж, хүч энергтэй байна.' : 'Та өдөрт 7-8 цагийн нойр авч хүч энергтэй ажиллана.', category: 'health', points: 10, required: true }),
   normalizeTask({ id: 'morning_water', text: 'Өглөө бүлээн ус 1-3 аяга уух', detailType: 'count', countMax: 3, tip: 'Өглөө сэрээд бүлээн ус уувал хоол боловсруулах эрхтэн сэрж, бие тэнхээжинэ.', category: 'health', points: 5, difficulty: 'easy', required: true }),
-  normalizeTask({ id: 'english_reading', text: 'Ном унших / Англи хэл', note: '10-15 минут', timerMinutes: 15, hasInput: true, inputPlaceholder: 'Хэдэн минут?', category: 'learning', points: 20, difficulty: 'hard', required: true }),
-  normalizeTask({ id: 'mongolian_reading', text: 'Монгол ном унших', note: '10-15 минут', timerMinutes: 15, hasInput: true, inputPlaceholder: 'Хэдэн минут?', category: 'learning', points: 15, required: false }),
   normalizeTask({ id: 'exercise', text: 'Дасгал хийх 15-20 минут', detailType: 'duration', options: ['Алхах', 'Гүйх', 'Дугуй унах'], timerMinutes: 20, tip: 'Өдөрт 15-20 минутын хөдөлгөөн зүрх судас, сэтгэл санаанд хамгийн их үр дүнтэй.', category: 'health', points: 20, difficulty: 'hard', required: true }),
+  normalizeTask({ id: 'english_reading', text: 'Ном унших 10-15 минут', detailType: 'duration', options: ['Монгол ном', 'Англи ном'], timerMinutes: 15, tip: 'Өнөөдөр аль номыг уншсанаа сонгоно уу.', category: 'learning', points: 20, difficulty: 'hard', required: true }),
   normalizeTask({ id: 'breakfast', text: 'Өглөөний цай сайн уух', note: 'Ислэг, уураглаг бүтээгдэхүүн хэрэглэх', hasInput: true, inputPlaceholder: 'Цаг?', category: 'nutrition', points: 10, required: true }),
   normalizeTask({ id: 'vitamins', text: 'Эрдэс витамин хэрэглэх', hasInput: true, inputPlaceholder: 'Тэмдэглэл', category: 'health', points: 5, difficulty: 'easy', required: false }),
   normalizeTask({ id: 'meal_prep', text: 'Хоол хийх / бэлдэх', options: ['Өдрийн хоол хийх', 'Оройн хоол бэлдэх', 'Маргаашийн хоолоо бэлдэх'], hasInput: true, inputPlaceholder: 'Цаг?', category: 'home', points: 15, required: false }),
@@ -173,6 +176,16 @@ export const getBaseTasks = (groupType = 'family', isKid = false) => {
 
 // Шинэ бүлэг үүсгэхэд: админы сонгосон үндсэн дадлуудыг (coreTaskIds) core
 // болгон тэмдэглэж буцаана. coreTaskIds байхгүй (хуучин урсгал) бол бүх багц.
+// Өглөөний дараалал: ус уусны дараа шууд дасгал (хуучин хадгалсан жагсаалтад ч).
+export const orderMorningTasks = (tasks) => {
+  const exerciseIndex = tasks.findIndex((task) => task.id === 'exercise');
+  const waterIndex = tasks.findIndex((task) => task.id === 'morning_water');
+  if (exerciseIndex < 0 || waterIndex < 0 || exerciseIndex === waterIndex + 1) return tasks;
+  const rest = tasks.filter((task) => task.id !== 'exercise');
+  const at = rest.findIndex((task) => task.id === 'morning_water') + 1;
+  return [...rest.slice(0, at), tasks[exerciseIndex], ...rest.slice(at)];
+};
+
 export const getStarterTasks = (groupType, isKid, coreTaskIds) => {
   const base = getBaseTasks(groupType, isKid);
   if (!Array.isArray(coreTaskIds)) return base;

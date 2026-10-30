@@ -15,7 +15,7 @@ import {
 } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from '../firebase';
 import { defaultMeals, defaultFamilyRewards } from '../data';
-import { normalizeTask, getStarterTasks, defaultNotificationSettings } from '../constants/tasks';
+import { normalizeTask, getStarterTasks, orderMorningTasks, defaultNotificationSettings } from '../constants/tasks';
 import { normalizeGroupType, getGroupTypeMeta } from '../constants/groupTypes';
 import { formatDateKey, getTodayDateKey, getWeekAgoKeys, dayNamesShort } from '../utils/dates';
 import { getSleepSummary } from '../utils/sleep';
@@ -288,7 +288,7 @@ export function useFamilyData({ user, selectedDate, onTaskCompleted, onTaskUncom
 
   const baseTasks = useMemo(() => {
     const tasks = selectedMemberId ? tasksByMember[selectedMemberId] : [];
-    return Array.isArray(tasks) ? tasks.map(normalizeTask) : [];
+    return Array.isArray(tasks) ? orderMorningTasks(tasks.map(normalizeTask)) : [];
   }, [tasksByMember, selectedMemberId]);
 
   // Memoized — P2.4: timer tick бүрт шинэ object identity үүсгэвэл
