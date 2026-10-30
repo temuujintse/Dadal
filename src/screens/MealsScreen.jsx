@@ -4,6 +4,14 @@ import { ChevronDown, ChevronRight, Edit, Save, Sparkles, Sun, Coffee, Moon, Cal
 import { getGroupTypeMeta } from '../constants/groupTypes';
 import { MEAL_PLANS, applyMealPlan } from '../constants/mealPlans';
 import FoodLogSection from '../components/FoodLogSection';
+import { BasketEditor, TodayMeals, WeekPlans, useTodayFallbackMeals } from '../components/MealPlanner';
+import { BRAND_BLUE } from '../constants/theme';
+
+const SECTIONS = [
+  { key: 'products', label: 'Бүтээгдэхүүн' },
+  { key: 'today', label: 'Өнөөдөр' },
+  { key: 'week', label: '7 хоног' },
+];
 
 const mealTypes = [
   { key: 'breakfast', label: 'Өглөөний хоол', emoji: '🌅', Icon: Sun, accent: '#f97316', image: 'https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?auto=format&fit=crop&w=900&q=75' },
@@ -45,7 +53,15 @@ export default function MealsScreen({
   onAddFoodEntry,
   onRemoveFoodEntry,
   foodLogDateLabel = '',
+  // Хоолны сагс (useMealPlans)
+  mealPlanDateKeys = [],
+  mealPlans = {},
+  onSaveMealPlan,
+  peopleCount = 1,
 }) {
+  const [section, setSection] = useState('today');
+  const [basketDateKey, setBasketDateKey] = useState(null);
+  const fallbackMeals = useTodayFallbackMeals(meals);
   const groupMeta = getGroupTypeMeta(groupType);
   const [mealNotice, setMealNotice] = useState('');
   const [showPlanPicker, setShowPlanPicker] = useState(false);
@@ -115,8 +131,54 @@ export default function MealsScreen({
   const handleMealInputChange = (type, value) => setTempMeals({ ...(tempMeals || {}), [type]: value });
   const selectedDate = weekDates[selectedIndex];
 
+  const sectionTabs = (
+    <View className="bg-white rounded-2xl p-1 flex-row border border-gray-200 mb-5">
+      {SECTIONS.map((item) => {
+        const selected = section === item.key;
+        return (
+          <TouchableOpacity key={item.key} onPress={() => setSection(item.key)} accessibilityRole="tab" accessibilityState={{ selected }} className="flex-1 py-3 rounded-xl items-center" style={{ backgroundColor: selected ? BRAND_BLUE : 'transparent' }}>
+            <Text className="text-xs font-black" style={{ color: selected ? '#fff' : '#64748b' }}>{item.label}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+
+  const foodLog = (
+    <View className="mt-6">
+      <Text className="text-[11px] font-black uppercase tracking-widest mb-1" style={{ color: '#64748b' }}>Бүртгэл</Text>
+      <Text className="text-2xl font-black mb-1" style={{ color: '#1e293b' }}>Идсэн хоол</Text>
+      <Text className="text-xs font-semibold text-gray-500 mb-4 leading-5">
+        {foodLogDateLabel ? `${foodLogDateLabel} — юу идсэнээ нэмээрэй` : 'Юу идсэнээ нэмэхэд калори, шим тэжээл автоматаар задарна'}
+      </Text>
+      <FoodLogSection entries={foodEntries} onAdd={onAddFoodEntry} onRemove={onRemoveFoodEntry} dailyTarget={dailyCalorieTarget} nutritionTarget={dailyMacroTarget} title="Өдрийн дүн" />
+    </View>
+  );
+
+  if (section === 'products') {
+    return (
+      <View className="p-5 pb-32">
+        {sectionTabs}
+        <BasketEditor dateKeys={mealPlanDateKeys} plans={mealPlans} initialDateKey={basketDateKey} canEdit={canEdit} people={peopleCount} onSave={onSaveMealPlan} />
+      </View>
+    );
+  }
+
+  if (section === 'today') {
+    return (
+      <View className="p-5 pb-32">
+        {sectionTabs}
+        <TodayMeals plan={mealPlans[mealPlanDateKeys[0]]} fallbackMeals={fallbackMeals} people={peopleCount} />
+        {foodLog}
+      </View>
+    );
+  }
+
   return (
     <View className="p-5 pb-32">
+      {sectionTabs}
+      <WeekPlans dateKeys={mealPlanDateKeys} plans={mealPlans} onOpenDay={(key) => { setBasketDateKey(key); setSection('products'); }} />
+      <Text className="text-[11px] font-black uppercase tracking-widest mt-8 mb-3" style={{ color: '#64748b' }}>Текст цэс</Text>
         <View className="flex-row justify-between items-center mb-5">
         <View className="flex-1 pr-3"><Text className="text-[11px] font-black uppercase tracking-widest" style={{ color: '#64748b' }}>Долоо хоног</Text><Text className="text-2xl font-black" style={{ color: '#1e293b' }}>Хоолны төлөвлөгөө</Text></View>
         {canEdit ? (
@@ -236,22 +298,6 @@ export default function MealsScreen({
         })}
       </View>
 
-      {/* Идсэн хоолны бүртгэл — ккал + уураг/өөх/нүүрс усны задаргаа */}
-      <View className="mt-6">
-        <Text className="text-[11px] font-black uppercase tracking-widest mb-1" style={{ color: '#64748b' }}>Бүртгэл</Text>
-        <Text className="text-2xl font-black mb-1" style={{ color: '#1e293b' }}>Идсэн хоол</Text>
-        <Text className="text-xs font-semibold text-gray-500 mb-4 leading-5">
-          {foodLogDateLabel ? `${foodLogDateLabel} — юу идсэнээ нэмээрэй` : 'Юу идсэнээ нэмэхэд калори, шим тэжээл автоматаар задарна'}
-        </Text>
-        <FoodLogSection
-          entries={foodEntries}
-          onAdd={onAddFoodEntry}
-          onRemove={onRemoveFoodEntry}
-          dailyTarget={dailyCalorieTarget}
-          nutritionTarget={dailyMacroTarget}
-          title="Өдрийн дүн"
-        />
-      </View>
     </View>
   );
 }

@@ -31,6 +31,7 @@ import { useTaskTimer } from './hooks/useTaskTimer';
 import { useDailyTip } from './hooks/useDailyTip';
 import { useAppUpdates } from './hooks/useAppUpdates';
 import { useFamilyData } from './hooks/useFamilyData';
+import useMealPlans from './hooks/useMealPlans';
 import { defaultMeals, defaultFamilyRewards } from './data';
 import { getTodayDateKey, dayNamesFull, mealKeyByWeekday } from './utils/dates';
 import { normalizeTask } from './constants/tasks';
@@ -218,6 +219,7 @@ function MainApp() {
     // харуулна (зөвшөөрөл/ownership/persist алдаа г.м.).
     onSaveError: (message) => showToast(message),
   });
+  const { mealPlanDateKeys, mealPlans, saveMealPlan } = useMealPlans({ familyId, todayKey, isLocalDemo: Boolean(user?.isLocalDemo) });
 
   const handleTimerFinish = (taskId) => {
     showToast('Цаг дууслаа! Гоё байна 🎉', 3500);
@@ -567,6 +569,10 @@ function MainApp() {
             onAddFoodEntry={handleAddFoodEntry}
             onRemoveFoodEntry={handleRemoveFoodEntry}
             foodLogDateLabel={headerDateStr}
+            mealPlanDateKeys={mealPlanDateKeys}
+            mealPlans={mealPlans}
+            onSaveMealPlan={saveMealPlan}
+            peopleCount={memberList.length || 1}
           />
         )}
         {activeTab === 'stats' && <StatsScreen sleepSummary={sleepSummary} groupType={familyProfile?.groupType || 'family'} userStats={displayStats} selectedUser={selectedUserName} progress={progress} weeklyReport={weeklyReport} weeklyTrend={weeklyTrend} completedCount={completedCount} totalTasks={currentDisplayTasks.length} />}

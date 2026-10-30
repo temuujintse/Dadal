@@ -166,6 +166,18 @@ service cloud.firestore {
         allow delete: if isAdmin(familyId);
       }
 
+      // Менежерийн (role parent/admin) сонгосон өдрийн хоолны сагс (2026-10-30).
+      // { breakfast|lunch|dinner: [{ productId, qty }], dateKey, updatedAt }
+      match /mealPlans/{dateKey} {
+        allow read: if isFamilyMember(familyId);
+        allow create, update: if isAdmin(familyId)
+          && request.resource.data.keys().hasOnly(['breakfast', 'lunch', 'dinner', 'dateKey', 'updatedAt'])
+          && request.resource.data.breakfast is list && request.resource.data.breakfast.size() <= 30
+          && request.resource.data.lunch is list && request.resource.data.lunch.size() <= 30
+          && request.resource.data.dinner is list && request.resource.data.dinner.size() <= 30;
+        allow delete: if isAdmin(familyId);
+      }
+
       match /meals/{docId} {
         allow read: if isFamilyMember(familyId);
         allow create, update, delete: if isAdmin(familyId);

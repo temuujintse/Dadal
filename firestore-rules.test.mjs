@@ -178,6 +178,26 @@ await seed();
 }
 
 // ══════════════════════════════════════════════════════════════════════
+console.log('━━━ Д. ХООЛНЫ САГС (mealPlans) ━━━');
+await seed();
+{
+  const kid = env.authenticatedContext('child_uid').firestore();
+  const parent = env.authenticatedContext('parent_uid').firestore();
+  const stranger = env.authenticatedContext('stranger_uid').firestore();
+  const plan = { breakfast: [{ productId: 'egg', qty: 3 }], lunch: [], dinner: [], dateKey: '2026-10-30' };
+  await check('Д1. Менежер өдрийн цэс хадгалах', 'allow',
+    () => setDoc(doc(parent, 'families/FAM_VICTIM/mealPlans/2026-10-30'), plan));
+  await check('Д2. Гишүүн цэсийг унших', 'allow',
+    () => getDoc(doc(kid, 'families/FAM_VICTIM/mealPlans/2026-10-30')));
+  await check('Д3. Энгийн гишүүн цэс бичих', 'deny',
+    () => setDoc(doc(kid, 'families/FAM_VICTIM/mealPlans/2026-10-31'), plan));
+  await check('Д4. Гадны хүн цэс унших', 'deny',
+    () => getDoc(doc(stranger, 'families/FAM_VICTIM/mealPlans/2026-10-30')));
+  await check('Д5. Илүү талбартай цэс', 'deny',
+    () => setDoc(doc(parent, 'families/FAM_VICTIM/mealPlans/2026-11-01'), { ...plan, hack: true }));
+}
+
+// ══════════════════════════════════════════════════════════════════════
 console.log(`\n${pass} давсан, ${fail} унасан\n`);
 if (fail) {
   console.log('Унасан тестүүд:');
