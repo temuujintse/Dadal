@@ -77,7 +77,7 @@ export default function App() {
 }
 
 function MainApp() {
-  const { user, authReady, firebaseError, authError, handleLogin, handleRegister, handleGuestLogin, handleGoogleLogin, handleAppleLogin, handleSignOut } = useAuth();
+  const { user, authReady, firebaseError, authError, handleGuestLogin, handleEmailContinue, handlePasswordReset, handleGoogleLogin, handleAppleLogin, handleSignOut } = useAuth();
   const { bootLoading, hasSeenOnboarding, finishOnboarding, resetOnboarding } = useOnboarding();
   const pendingInviteCode = useInviteLinkCode();
 
@@ -160,6 +160,8 @@ function MainApp() {
     familySetupLoading,
     familyMissing,
     memberList,
+    dailyLogs,
+    tasksByMember,
     displayStats,
     selectedMemberId,
     setSelectedMemberId,
@@ -455,7 +457,7 @@ function MainApp() {
 
   if (bootLoading || !authReady) return renderLoading();
   if (!hasSeenOnboarding) return <OnboardingScreen onFinish={finishOnboarding} />;
-  if (!user) return <AuthScreen onLogin={handleLogin} onRegister={handleRegister} onGuest={handleGuestLogin} onGoogle={handleGoogleLogin} onApple={handleAppleLogin} error={authError || firebaseError} />;
+  if (!user) return <AuthScreen onEmailContinue={handleEmailContinue} onResetPassword={handlePasswordReset} onGuest={handleGuestLogin} onGoogle={handleGoogleLogin} onApple={handleAppleLogin} error={authError || firebaseError} />;
   if (familyId && !familyProfile) {
     // P2.1: family документ бодитоор байхгүй (owner устгасан) эсвэл listener
     // алдаа гарсан бол МӨНХ ачаалжих дэлгэцэнд боомилж болохгүй — setup руу
@@ -575,7 +577,7 @@ function MainApp() {
             peopleCount={memberList.length || 1}
           />
         )}
-        {activeTab === 'stats' && <StatsScreen sleepSummary={sleepSummary} groupType={familyProfile?.groupType || 'family'} userStats={displayStats} selectedUser={selectedUserName} progress={progress} weeklyReport={weeklyReport} weeklyTrend={weeklyTrend} completedCount={completedCount} totalTasks={currentDisplayTasks.length} />}
+        {activeTab === 'stats' && <StatsScreen sleepSummary={sleepSummary} dailyLogs={dailyLogs} tasksByMember={tasksByMember} memberList={memberList} groupType={familyProfile?.groupType || 'family'} userStats={displayStats} selectedUser={selectedUserName} progress={progress} weeklyReport={weeklyReport} weeklyTrend={weeklyTrend} completedCount={completedCount} totalTasks={currentDisplayTasks.length} />}
         {activeTab === 'settings' && <SettingsScreen familyProfile={familyProfile} selectedUser={selectedUserName} currentMember={currentUserMember} members={memberList} notificationSettings={notificationSettings} onSaveNotificationSettings={saveNotificationSettings} onLogout={handleLogout} onResetOnboarding={handleResetOnboarding} onSaveMemberProfile={saveMemberProfile} onTransferAdmin={async (uid, options) => { const result = await transferAdmin(uid, options); showToast(result.ok ? 'Админ эрх шинэчлэгдлээ' : result.message); }} />}
       </ScrollView>
 

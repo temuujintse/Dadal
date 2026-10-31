@@ -4,6 +4,7 @@ import { LineChart, PieChart } from 'react-native-chart-kit';
 import { Crown, Flame, Medal, TrendingUp, Trophy } from 'lucide-react-native';
 import { getGroupTypeMeta } from '../constants/groupTypes';
 import { formatHours } from '../utils/sleep';
+import Leaderboard from '../components/Leaderboard';
 
 const chartConfig = {
   backgroundGradientFrom: '#ffffff',
@@ -15,7 +16,7 @@ const chartConfig = {
   propsForBackgroundLines: { stroke: '#f1f5f9' },
 };
 
-export default function StatsScreen({ userStats, selectedUser, progress, weeklyReport, weeklyTrend = [], completedCount = 0, totalTasks = 0, groupType = 'family', sleepSummary = null }) {
+export default function StatsScreen({ userStats, selectedUser, progress, weeklyReport, weeklyTrend = [], completedCount = 0, totalTasks = 0, groupType = 'family', sleepSummary = null, dailyLogs = {}, tasksByMember = {}, memberList = [] }) {
   // Бүлгийн төрлөөс хамаарсан угтвар — "Гэр бүлийн" / "Найзуудын" / "Миний".
   const groupMeta = getGroupTypeMeta(groupType);
   const isSolo = groupMeta.id === 'personal';
@@ -35,6 +36,7 @@ export default function StatsScreen({ userStats, selectedUser, progress, weeklyR
 
   return (
     <View className="px-5 pt-2 pb-32">
+      {!isSolo ? <Leaderboard dailyLogs={dailyLogs} tasksByMember={tasksByMember} memberList={memberList} /> : null}
       <View className="mb-5"><Text className="text-[11px] font-black uppercase tracking-widest" style={{ color: '#64748b' }}>{groupMeta.possessive} тойм</Text><Text className="text-2xl font-black" style={{ color: '#1e293b' }}>Статистик</Text></View>
 
       <View className="bg-gray-950 rounded-[30px] p-5 mb-5 overflow-hidden"><View className="absolute w-44 h-44 rounded-full bg-orange-500/20 -right-16 -top-20" /><View className="flex-row items-center gap-2"><TrendingUp size={17} color="#fdba74" /><Text className="text-orange-200 text-[10px] font-black uppercase">{selectedUser}</Text></View><View className="flex-row items-end justify-between mt-3"><View><Text className="text-white text-5xl font-black">{progress}%</Text><Text className="text-gray-400 text-xs font-semibold mt-1">Өнөөдрийн биелэлт</Text></View><View className="flex-row gap-2"><View className="bg-white/10 rounded-2xl px-3 py-2"><Text className="text-white font-black text-xl">{selectedStats.points}</Text><Text className="text-gray-400 text-[9px] font-black">Оноо</Text></View><View className="bg-white/10 rounded-2xl px-3 py-2"><Text className="text-white font-black text-xl">🔥{selectedStats.streak}</Text><Text className="text-gray-400 text-[9px] font-black">өдөр</Text></View></View></View></View>

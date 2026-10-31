@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Application from 'expo-application';
-import { Mail, Lock, LogIn, UserPlus, ArrowLeft, Users, Eye, EyeOff, Globe, Apple, ChevronRight } from 'lucide-react-native';
+import { Mail, Lock, LogIn, Users, Eye, EyeOff, Globe, Apple } from 'lucide-react-native';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import * as AppleAuthentication from 'expo-apple-authentication';
@@ -20,11 +20,10 @@ import * as Crypto from 'expo-crypto';
 
 WebBrowser.maybeCompleteAuthSession();
 
-export default function AuthScreen({ onLogin, onRegister, onGuest, onGoogle, onApple, error }) {
-  const [mode, setMode] = useState(null);
+export default function AuthScreen({ onEmailContinue, onResetPassword, onGuest, onGoogle, onApple, error }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [notice, setNotice] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState('');
@@ -129,29 +128,30 @@ export default function AuthScreen({ onLogin, onRegister, onGuest, onGoogle, onA
       .finally(() => setBusy(false));
   }, [googleResponse]);
 
-  const resetForm = (nextMode) => {
-    setEmail('');
-    setPassword('');
-    setConfirmPassword('');
-    setLocalError('');
-    setMode(nextMode);
-  };
-
   const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
+  // Нэг товч: бүртгэлтэй бол нэвтэрнэ, үгүй бол автоматаар бүртгэнэ (AuthContext).
   const submit = async () => {
     setLocalError('');
+    setNotice('');
     if (!emailLooksValid) return setLocalError('Email хаягаа зөв бичнэ үү.');
     if (password.length < 6) return setLocalError('Нууц үг 6-аас дээш тэмдэгттэй байх ёстой.');
-    if (mode === 'register' && password !== confirmPassword) return setLocalError('Нууц үг таарахгүй байна.');
     if (busy) return;
     setBusy(true);
     try {
-      if (mode === 'login') await onLogin?.(email.trim(), password);
-      if (mode === 'register') await onRegister?.(email.trim(), password);
+      await onEmailContinue?.(email.trim(), password);
     } finally {
       setBusy(false);
     }
+  };
+
+  const resetPassword = async () => {
+    setLocalError('');
+    setNotice('');
+    if (!emailLooksValid) return setLocalError('Эхлээд email хаягаа бичнэ үү.');
+    const result = await onResetPassword?.(email.trim());
+    if (result?.ok) setNotice(`${email.trim()} хаяг руу нууц үг сэргээх холбоос илгээлээ.`);
+    else setLocalError(result?.message || 'Илгээж чадсангүй.');
   };
 
   const handleGoogle = async () => {
@@ -202,74 +202,46 @@ export default function AuthScreen({ onLogin, onRegister, onGuest, onGoogle, onA
 
   const displayError = localError || error;
 
-  if (!mode) {
-    return (
-      <SafeAreaView className="flex-1 bg-[#fffaf5]">
-        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 28 }}>
-          <View className="items-center mb-7">
-            <View className="w-20 h-20 rounded-[28px] bg-orange-500 items-center justify-center mb-5">
-              <Users size={38} color="#fff" strokeWidth={2.5} />
-            </View>
-            <Text className="text-[11px] font-black uppercase text-orange-500 tracking-widest mb-2">Family Habit</Text>
-            <Text className="text-[31px] font-black text-gray-950 text-center leading-9">Нэвтрэх</Text>
-            <Text className="text-sm font-semibold text-gray-500 text-center mt-3 leading-5 px-4">Нэвтэрсний дараа зөвхөн аватар, нэрээ сонгоод гэр бүлээ тохируулна.</Text>
-          </View>
-
-          <View className="gap-3">
-            <TouchableOpacity onPress={handleGoogle} disabled={busy} className="bg-white border border-gray-200 rounded-3xl p-4 flex-row items-center">
-              <View className="w-12 h-12 rounded-2xl bg-orange-50 border border-orange-100 items-center justify-center"><Globe size={24} color="#f97316" /></View>
-              <Text className="flex-1 ml-4 text-base font-black text-gray-900">Google-ээр үргэлжлүүлэх</Text>
-              <ChevronRight size={20} color="#94a3b8" />
-            </TouchableOpacity>
-
-            {appleAvailable ? (
-              <TouchableOpacity onPress={handleApple} disabled={busy} className="bg-gray-950 rounded-3xl p-4 flex-row items-center">
-                <View className="w-12 h-12 rounded-2xl bg-white/10 items-center justify-center"><Apple size={25} color="#fff" fill="#fff" /></View>
-                <Text className="flex-1 ml-4 text-base font-black text-white">Apple ID-аар үргэлжлүүлэх</Text>
-                <ChevronRight size={20} color="#cbd5e1" />
-              </TouchableOpacity>
-            ) : null}
-
-            <View className="flex-row items-center my-2"><View className="flex-1 h-px bg-gray-200" /><Text className="mx-3 text-xs font-black text-gray-400">эсвэл</Text><View className="flex-1 h-px bg-gray-200" /></View>
-
-            <TouchableOpacity onPress={() => resetForm('register')} className="bg-orange-500 rounded-3xl p-4 flex-row items-center">
-              <View className="w-12 h-12 rounded-2xl bg-white/15 items-center justify-center"><Mail size={23} color="#fff" /></View>
-              <Text className="flex-1 ml-4 text-base font-black text-white">Email-ээр бүртгүүлэх</Text>
-              <ChevronRight size={20} color="#fff" />
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => resetForm('login')} className="items-center py-3"><Text className="text-sm font-black text-orange-600">Account байгаа бол нэвтрэх</Text></TouchableOpacity>
-            <TouchableOpacity onPress={onGuest} className="items-center py-2"><Text className="text-xs font-black text-gray-400">Demo байдлаар үзэх</Text></TouchableOpacity>
-          </View>
-
-          {busy ? <ActivityIndicator color="#f97316" className="mt-4" /> : null}
-          {displayError ? <Text className="text-xs font-bold text-red-500 text-center mt-3 leading-5">{displayError}</Text> : null}
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  const isRegister = mode === 'register';
-  const submitDisabled = busy || !email.trim() || password.length < 6 || (isRegister && confirmPassword.length < 6);
+  const submitDisabled = busy || !email.trim() || password.length < 6;
 
   return (
     <SafeAreaView className="flex-1 bg-[#fffaf5]">
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} className="flex-1">
-        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 24 }} keyboardShouldPersistTaps="handled">
-          <TouchableOpacity onPress={() => setMode(null)} className="w-11 h-11 rounded-2xl bg-white border border-orange-100 items-center justify-center mb-5"><ArrowLeft size={20} color="#111827" /></TouchableOpacity>
-          <Text className="text-[11px] font-black uppercase text-orange-500 tracking-widest mb-2">Бүртгэл</Text>
-          <Text className="text-3xl font-black text-gray-950 mb-2">{isRegister ? 'Email бүртгэл' : 'Тавтай морил'}</Text>
-          <Text className="text-sm font-semibold text-gray-500 mb-6">{isRegister ? 'Гурван талбар бөглөөд шууд үргэлжилнэ.' : 'Email, нууц үгээ оруулна.'}</Text>
-
-          <View className="bg-white border border-orange-100 rounded-[28px] p-4 gap-3">
-            <View className="flex-row items-center bg-[#fffaf5] border border-orange-100 rounded-2xl px-3"><Mail size={18} color="#fb923c" /><TextInput value={email} onChangeText={setEmail} placeholder="Email" placeholderTextColor="#94a3b8" autoCapitalize="none" keyboardType="email-address" className="flex-1 p-3 text-sm font-bold text-gray-900" /></View>
-            <View className="flex-row items-center bg-[#fffaf5] border border-orange-100 rounded-2xl px-3"><Lock size={18} color="#fb923c" /><TextInput value={password} onChangeText={setPassword} placeholder="Нууц үг / 6+ тэмдэгт" placeholderTextColor="#94a3b8" secureTextEntry={!showPassword} className="flex-1 p-3 text-sm font-bold text-gray-900" /><TouchableOpacity onPress={() => setShowPassword((v) => !v)} className="p-2">{showPassword ? <EyeOff size={18} color="#94a3b8" /> : <Eye size={18} color="#94a3b8" />}</TouchableOpacity></View>
-            {isRegister ? <View className="flex-row items-center bg-[#fffaf5] border border-orange-100 rounded-2xl px-3"><Lock size={18} color="#fb923c" /><TextInput value={confirmPassword} onChangeText={setConfirmPassword} placeholder="Нууц үг давтах" placeholderTextColor="#94a3b8" secureTextEntry={!showPassword} className="flex-1 p-3 text-sm font-bold text-gray-900" /></View> : null}
-            {displayError ? <Text className="text-xs font-bold text-red-500 leading-5">{displayError}</Text> : null}
-            <TouchableOpacity onPress={submit} disabled={submitDisabled} className="bg-orange-500 py-4 rounded-2xl items-center flex-row justify-center gap-2" style={{ opacity: submitDisabled ? 0.5 : 1 }}>{busy ? <ActivityIndicator color="#fff" /> : isRegister ? <UserPlus size={18} color="#fff" /> : <LogIn size={18} color="#fff" />}<Text className="text-white font-black">{isRegister ? 'Бүртгэл үүсгэх' : 'Нэвтрэх'}</Text></TouchableOpacity>
+        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 28 }} keyboardShouldPersistTaps="handled">
+          <View className="items-center mb-6">
+            <View className="w-20 h-20 rounded-[28px] bg-orange-500 items-center justify-center mb-4">
+              <Users size={38} color="#fff" strokeWidth={2.5} />
+            </View>
+            <Text className="text-[31px] font-black text-gray-950 text-center leading-9">Дадал</Text>
+            <Text className="text-sm font-semibold text-gray-500 text-center mt-2 leading-5 px-4">Email, нууц үгээ бичээд үргэлжлүүлээрэй. Шинэ бол автоматаар бүртгэнэ.</Text>
           </View>
 
-          <TouchableOpacity onPress={() => resetForm(isRegister ? 'login' : 'register')} className="items-center mt-5"><Text className="text-sm font-black text-orange-600">{isRegister ? 'Account байгаа бол нэвтрэх' : 'Шинэ account үүсгэх'}</Text></TouchableOpacity>
+          <View className="bg-white border border-orange-100 rounded-[28px] p-4 gap-3">
+            <View className="flex-row items-center bg-[#fffaf5] border border-orange-100 rounded-2xl px-3"><Mail size={18} color="#fb923c" /><TextInput value={email} onChangeText={setEmail} placeholder="Email" placeholderTextColor="#94a3b8" autoCapitalize="none" autoComplete="email" textContentType="emailAddress" keyboardType="email-address" returnKeyType="next" className="flex-1 p-3 text-sm font-bold text-gray-900" /></View>
+            <View className="flex-row items-center bg-[#fffaf5] border border-orange-100 rounded-2xl px-3"><Lock size={18} color="#fb923c" /><TextInput value={password} onChangeText={setPassword} onSubmitEditing={submit} placeholder="Нууц үг (6+ тэмдэгт)" placeholderTextColor="#94a3b8" secureTextEntry={!showPassword} autoComplete="password" textContentType="password" returnKeyType="go" className="flex-1 p-3 text-sm font-bold text-gray-900" /><TouchableOpacity onPress={() => setShowPassword((v) => !v)} accessibilityLabel={showPassword ? 'Нууц үг нуух' : 'Нууц үг харах'} className="p-2">{showPassword ? <EyeOff size={18} color="#94a3b8" /> : <Eye size={18} color="#94a3b8" />}</TouchableOpacity></View>
+            {displayError ? <Text className="text-xs font-bold text-red-500 leading-5">{displayError}</Text> : null}
+            {notice ? <Text className="text-xs font-bold text-green-600 leading-5">{notice}</Text> : null}
+            <TouchableOpacity onPress={submit} disabled={submitDisabled} className="bg-orange-500 py-4 rounded-2xl items-center flex-row justify-center gap-2" style={{ opacity: submitDisabled ? 0.5 : 1 }}>
+              {busy ? <ActivityIndicator color="#fff" /> : <LogIn size={18} color="#fff" />}
+              <Text className="text-white font-black">Үргэлжлүүлэх</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={resetPassword} className="items-center py-1"><Text className="text-xs font-black text-gray-400">Нууц үгээ мартсан</Text></TouchableOpacity>
+          </View>
+
+          <View className="flex-row items-center my-5"><View className="flex-1 h-px bg-gray-200" /><Text className="mx-3 text-xs font-black text-gray-400">эсвэл</Text><View className="flex-1 h-px bg-gray-200" /></View>
+
+          <View className="flex-row gap-3">
+            <TouchableOpacity onPress={handleGoogle} disabled={busy} className="flex-1 bg-white border border-gray-200 rounded-2xl py-3.5 flex-row items-center justify-center gap-2">
+              <Globe size={18} color="#f97316" /><Text className="text-sm font-black text-gray-900">Google</Text>
+            </TouchableOpacity>
+            {appleAvailable ? (
+              <TouchableOpacity onPress={handleApple} disabled={busy} className="flex-1 bg-gray-950 rounded-2xl py-3.5 flex-row items-center justify-center gap-2">
+                <Apple size={18} color="#fff" fill="#fff" /><Text className="text-sm font-black text-white">Apple</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          <TouchableOpacity onPress={onGuest} className="items-center py-4 mt-2"><Text className="text-xs font-black text-gray-400">Demo байдлаар үзэх</Text></TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

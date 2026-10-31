@@ -7,6 +7,7 @@ import {
   signInAnonymously,
   signInWithCredential,
   signInWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut,
 } from 'firebase/auth';
 import { auth, isFirebaseConfigured } from '../firebase';
@@ -74,6 +75,41 @@ export function AuthProvider({ children }) {
     catch (e) { setAuthError(authErrorText(e.code)); }
   };
 
+  // Нэг товчоор: эхлээд нэвтэрнэ, бүртгэл байхгүй бол автоматаар үүсгэнэ.
+  // Firebase-ийн email enumeration хамгаалалт асаалттай үед буруу нууц үг ч,
+  // байхгүй бүртгэл ч 'invalid-credential' өгдөг тул бүртгэл үүсгэхийг
+  // оролдож, 'email-already-in-use' гарвал нууц үг буруу гэж үзнэ.
+  const handleEmailContinue = async (email, password) => {
+    if (!isFirebaseConfigured || !auth) return setAuthError('Firebase config эхлээд холбоно уу.');
+    setAuthError(null);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      return;
+    } catch (e) {
+      if (!['auth/invalid-credential', 'auth/user-not-found'].includes(e.code)) {
+        setAuthError(authErrorText(e.code));
+        return;
+      }
+    }
+    try {
+      await createUserWithEmailAndPassword(auth, email, password);
+    } catch (e) {
+      setAuthError(e.code === 'auth/email-already-in-use'
+        ? 'Нууц үг буруу байна. "Нууц үгээ мартсан" дээр дарж сэргээж болно.'
+        : authErrorText(e.code));
+    }
+  };
+
+  const handlePasswordReset = async (email) => {
+    if (!isFirebaseConfigured || !auth) return { ok: false, message: 'Firebase config эхлээд холбоно уу.' };
+    try {
+      await sendPasswordResetEmail(auth, email);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: authErrorText(e.code) };
+    }
+  };
+
   const handleGuestLogin = async () => {
     if (!isFirebaseConfigured || !auth) {
       // Dev-д Firebase config байхгүй үед ч дэлгэцүүдийг үзэж засварлах
@@ -133,6 +169,8 @@ export function AuthProvider({ children }) {
     handleLogin,
     handleRegister,
     handleGuestLogin,
+    handleEmailContinue,
+    handlePasswordReset,
     handleGoogleLogin,
     handleAppleLogin,
     handleSignOut,
